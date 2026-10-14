@@ -49,6 +49,10 @@ const attendanceListValidators = [
   query('department').optional().isString().trim().isLength({ max: 100 }),
   query('employeeId').optional().isString().trim().isLength({ max: 64 }),
 ];
+const dashboardValidators = [
+  query('month').optional().matches(/^\d{4}-(0[1-9]|1[0-2])$/)
+    .withMessage('month must use YYYY-MM format.'),
+];
 const createAttendanceValidators = [
   body('employeeId').isString().trim().notEmpty().isLength({ max: 64 }),
   body('date').matches(/^\d{4}-\d{2}-\d{2}$/),
@@ -85,7 +89,7 @@ router.use(protect);
 router.get('/today', adminOrHR, getTodayAttendance);
 router.get('/report', adminOrHR, reportValidators, validateRequest, getAttendanceReport);
 router.get('/export', adminOrHR, reportValidators, validateRequest, exportAttendanceReport);
-router.get('/dashboard',  adminOrHR,       getDashboard);
+router.get('/dashboard',  adminOrHR, dashboardValidators, validateRequest, getDashboard);
 router.get('/analytics',  adminOrHR,       getAnalytics);
 router.get('/my/stats',   employeeOrAdmin, getMyStats);
 router.get('/my',         employeeOrAdmin, getMyAttendance);

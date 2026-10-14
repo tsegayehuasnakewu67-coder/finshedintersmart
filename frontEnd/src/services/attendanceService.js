@@ -1,4 +1,5 @@
 import api from './api';
+import { getOnce } from './inFlightGet';
 
 export const attendanceService = {
   startLivenessChallenge: async ()         => (await api.post('/attendance/liveness/challenge')).data.data,
@@ -7,7 +8,10 @@ export const attendanceService = {
   getKioskStatus: async ()               => (await api.get('/attendance/kiosk-status')).data.data,
   getCompany:     async (params = {})    => (await api.get('/reports',                  { params })).data.data,
   getMine:        async (params = {})    => (await api.get('/attendance/my',            { params })).data.data,
-  getDashboard:   async ()               => (await api.get('/attendance/dashboard', { timeout: 60000 })).data.data,
+  getDashboard:   async (params = {})    => getOnce(
+    `attendance:dashboard:${params.month || 'current'}`,
+    async () => (await api.get('/attendance/dashboard', { params, timeout: 60000 })).data.data,
+  ),
   getMyStats:     async ()               => (await api.get('/attendance/my/stats')).data.data,
   getAnalytics:   async (params = {})    => (await api.get('/reports/analytics',        { params })).data.data,
 };

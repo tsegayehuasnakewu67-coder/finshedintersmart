@@ -1,4 +1,6 @@
 const ShiftSettings = require('../models/ShiftSettings');
+const { validateShiftSettings } = require('../utils/shiftTime');
+const { recordAuditEvent, auditWarning } = require('../utils/auditLog');
 
 const DEFAULTS = {
   startHour: 8, startMinute: 30,
@@ -34,9 +36,19 @@ const updateSettings = async (req, res) => {
       beforeLunchStartHour, beforeLunchStartMinute, beforeLunchEndHour, beforeLunchEndMinute,
       afterLunchStartHour, afterLunchStartMinute, afterLunchEndHour, afterLunchEndMinute,
       notifyCheckIn, notifyCheckOut,
-    } = req.body;
+    } = req.body || {};
 
-    const num = (v, lo, hi) => Number.isInteger(+v) && +v >= lo && +v <= hi;
+    if (typeof lunchEnabled !== 'boolean') {
+      return res.status(400).json({ success: false, message: 'lunchEnabled must be a boolean.' });
+    }
+    for (const [name, value] of [['notifyCheckIn', notifyCheckIn], ['notifyCheckOut', notifyCheckOut]]) {
+      if (value !== undefined && typeof value !== 'boolean') {
+        return res.status(400).json({ success: false, message: `${name} must be a boolean.` });
+      }
+    }
+
+    const num = (v, lo, hi) => v !== null && v !== undefined && v !== ''
+      && Number.isInteger(+v) && +v >= lo && +v <= hi;
     if (!num(startHour,   0, 23))  return res.status(400).json({ success: false, message: 'startHour must be 0-23.' });
     if (!num(startMinute, 0, 59))  return res.status(400).json({ success: false, message: 'startMinute must be 0-59.' });
     if (!num(gracePeriod, 5, 20))  return res.status(400).json({ success: false, message: 'Grace period must be between 5 and 20 minutes.' });
@@ -46,7 +58,7 @@ const updateSettings = async (req, res) => {
     if (lunchEnabled) {
       if (!num(lunchStartHour,   0, 23))  return res.status(400).json({ success: false, message: 'lunchStartHour must be 0-23.' });
       if (!num(lunchStartMinute, 0, 59))  return res.status(400).json({ success: false, message: 'lunchStartMinute must be 0-59.' });
-      if (!num(lunchDuration,    0, 180)) return res.status(400).json({ success: false, message: 'lunchDuration must be 0-180 minutes.' });
+      if (!num(lunchDuration,    1, 180)) return res.status(400).json({ success: false, message: 'lunchDuration must be 1-180 minutes.' });
     }
 
     const windowFields = [
@@ -59,6 +71,32 @@ const updateSettings = async (req, res) => {
       if (!num(value, lo, hi)) return res.status(400).json({ success: false, message: `${name} is out of range.` });
     }
 
+    const validationError = validateShiftSettings({
+      startHour: +startHour,
+      startMinute: +startMinute,
+      endHour: +endHour,
+      endMinute: +endMinute,
+      lunchEnabled: !!lunchEnabled,
+      lunchStartHour: lunchEnabled ? +lunchStartHour : 12,
+      lunchStartMinute: lunchEnabled ? +lunchStartMinute : 0,
+      lunchDuration: lunchEnabled ? +lunchDuration : 0,
+      beforeLunchStartHour: +beforeLunchStartHour,
+      beforeLunchStartMinute: +beforeLunchStartMinute,
+      beforeLunchEndHour: +beforeLunchEndHour,
+      beforeLunchEndMinute: +beforeLunchEndMinute,
+      afterLunchStartHour: +afterLunchStartHour,
+      afterLunchStartMinute: +afterLunchStartMinute,
+      afterLunchEndHour: +afterLunchEndHour,
+      afterLunchEndMinute: +afterLunchEndMinute,
+    });
+    if (validationError) {
+      return res.status(400).json({ success: false, message: validationError });
+    }
+
+    const previousSettingsQuery = ShiftSettings.findOne({ _key: 'default' });
+    const previousSettings = typeof previousSettingsQuery.lean === 'function'
+      ? await previousSettingsQuery.lean()
+      : await previousSettingsQuery;
     const settings = await ShiftSettings.findOneAndUpdate(
       { _key: 'default' },
       {
@@ -83,8 +121,28 @@ const updateSettings = async (req, res) => {
       { upsert: true, new: true, runValidators: true }
     );
 
-    return res.json({ success: true, message: 'Shift settings updated.', data: settings });
+    const storedSettings = settings.toObject ? settings.toObject() : settings;
+    const afterSettings = Object.fromEntries(
+      Object.entries(storedSettings).filter(([field]) => !['_id', '_key', '__v', 'createdAt', 'updatedAt'].includes(field)),
+    );
+    const beforeSettings = Object.fromEntries(
+      Object.entries(previousSettings || {}).filter(([field]) => !['_id', '_key', '__v', 'createdAt', 'updatedAt'].includes(field)),
+    );
+    const changedFields = Object.keys(afterSettings).filter(field => beforeSettings[field] !== afterSettings[field]);
+    const auditRecorded = await recordAuditEvent(req, {
+      action: 'SHIFT_SETTINGS_UPDATED',
+      resourceType: 'shift_settings',
+      resourceId: settings._id,
+      summary: 'Updated organization shift and attendance settings.',
+      details: {
+        changedFields,
+        before: beforeSettings,
+        after: afterSettings,
+      },
+    });
+    return res.json({ success: true, message: 'Shift settings updated.', data: settings, ...auditWarning(auditRecorded) });
   } catch (err) {
+    console.error('Unable to update shift settings.', { errorName: err.name, errorCode: err.code });
     return res.status(500).json({ success: false, message: err.message });
   }
 };

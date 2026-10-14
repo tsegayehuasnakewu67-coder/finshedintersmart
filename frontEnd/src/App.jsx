@@ -6,19 +6,22 @@ import Layout           from './components/Layout';
 import Spinner          from './components/Spinner';
 
 import Login            from './pages/Login';
-import Signup           from './pages/Signup';
 import HomePage         from './pages/HomePage';
 import AdminSetup       from './pages/AdminSetup';
 import MarkAttendance   from './pages/MarkAttendance';
 
 import AdminDashboard   from './pages/admin/AdminDashboard';
+import AdminAuditLogs   from './pages/admin/AdminAuditLogs';
 import HRDashboard      from './pages/hr/HRDashboard';
 import ManageUsers      from './pages/admin/ManageUsers';
 import AttendanceReports from './pages/admin/AttendanceReports';
 import Register         from './pages/Register';
+import RegisterHr       from './pages/admin/RegisterHr';
 import ShiftSettings    from './pages/admin/ShiftSettings';
+import AdminMessages    from './pages/admin/AdminMessages';
 
 import UserDashboard    from './pages/user/UserDashboard';
+import MyMessages       from './pages/user/MyMessages';
 import Notifications    from './pages/Notifications';
 import LeaveManagement  from './pages/LeaveManagement';
 import ChangePassword  from './pages/ChangePassword';
@@ -41,7 +44,7 @@ export default function App() {
       <Route path="/project"  element={user ? <Navigate to={home} replace /> : <HomePage page="project" />} />
       <Route path="/contact"  element={user ? <Navigate to={home} replace /> : <HomePage page="contact" />} />
       <Route path="/login"   element={user ? <Navigate to={home} replace /> : <Login />} />
-      <Route path="/signup"  element={user ? <Navigate to={home} replace /> : <Signup />} />
+      <Route path="/signup"  element={<Navigate to="/login" replace />} />
       <Route path="/forgot-password" element={user ? <Navigate to={home} replace /> : <ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/setup"   element={user ? <Navigate to={home} replace /> : <AdminSetup />} />
@@ -54,10 +57,13 @@ export default function App() {
       <Route element={<ProtectedRoute role="admin" />}>
         <Route element={<Layout />}>
           <Route path="/admin"            element={<AdminDashboard />} />
+          <Route path="/admin/audit-logs" element={<AdminAuditLogs />} />
           <Route path="/admin/users"      element={<ManageUsers />} />
           <Route path="/admin/reports"    element={<AttendanceReports />} />
           <Route path="/admin/register"   element={<Register />} />
+          <Route path="/admin/register-hr" element={<RegisterHr />} />
           <Route path="/admin/settings"   element={<ShiftSettings />} />
+          <Route path="/admin/messages" element={<AdminMessages />} />
           <Route path="/admin/notifications" element={<Notifications />} />
           <Route path="/admin/leaves" element={<LeaveManagement />} />
         </Route>
@@ -77,6 +83,7 @@ export default function App() {
       <Route element={<ProtectedRoute role="employee" />}>
         <Route element={<Layout />}>
           <Route path="/me" element={<UserDashboard />} />
+          <Route path="/me/messages" element={<MyMessages />} />
           <Route path="/me/notifications" element={<Notifications />} />
           <Route path="/me/leaves" element={<LeaveManagement />} />
         </Route>

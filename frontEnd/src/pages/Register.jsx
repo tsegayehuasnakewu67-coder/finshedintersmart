@@ -1,25 +1,24 @@
 /**
- * Register — Admin onboards a new employee, HR user, or administrator.
+ * Register — Admin onboards an employee.
  *
  * Layout guarantees (inline styles — immune to Tailwind JIT purge):
  *  • Form card: max-width 960px, background #0f182a,
  *    border 1px solid #1e283b, borderRadius 16px, overflow hidden
  *  • All inputs: zero placeholder attributes — labels above only
- *  • Confirm Password: real-time match validation (border colour + hint)
- *  • Password fields: show/hide toggle
  *  • 32px gap between every form row
  */
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { authService } from '../services/authService';
 import { userService } from '../services/userService';
 import { loadModels, getDescriptor } from '../utils/faceApi';
 import { CUSTOM_OPTION, DEPARTMENTS, POSITION_OPTIONS } from '../utils/employmentOptions';
-import { Camera, CheckCircle2, UserPlus, ArrowLeft, X, Eye, EyeOff } from 'lucide-react';
+import { Camera, CheckCircle2, UserPlus, ArrowLeft, X } from 'lucide-react';
 
 const INIT = {
-  fullName: '', employeeId: '', email: '', password: '', confirmPassword: '',
-  department: '', customDepartment: '', position: '', customPosition: '', role: 'employee',
+  fullName: '', employeeId: '', email: '',
+  department: '', customDepartment: '', position: '', customPosition: '',
   phone: '', gender: '', dateOfBirth: '', address: '', photo: '', status: 'Active',
 };
 
@@ -74,9 +73,6 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
   const [success, setSuccess] = useState('');
-
-  const [showPw,  setShowPw]  = useState(false);
-  const [showCPw, setShowCPw] = useState(false);
 
   const [camOpen,   setCamOpen]   = useState(false);
   const [modelsOk,  setModelsOk]  = useState(false);
@@ -134,7 +130,6 @@ export default function Register() {
           email: user.email,
           department: user.department,
           position: user.position,
-          role: user.role,
           phone: user.phone || '',
           gender: user.gender || '',
           dateOfBirth: user.dateOfBirth ? new Date(user.dateOfBirth).toISOString().slice(0, 10) : '',
@@ -148,9 +143,6 @@ export default function Register() {
   }, [editUserId]);
 
   const set = e => setForm(p => ({ ...p, [e.target.name]: e.target.value }));
-
-  const pwMismatch = form.confirmPassword.length > 0 && form.password !== form.confirmPassword;
-  const pwMatch    = form.confirmPassword.length > 0 && form.password === form.confirmPassword;
 
   /* ── Camera helpers ── */
   const openCam = () => {
@@ -176,15 +168,6 @@ export default function Register() {
   const handleSubmit = async e => {
     e.preventDefault();
     setError(''); setSuccess('');
-    if (!editUserId && form.role !== 'employee' && form.password !== form.confirmPassword) {
-      setError('Passwords do not match.');
-      return;
-    }
-    if (!editUserId && form.role !== 'employee'
-      && (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9])/.test(form.password) || form.password.length < 12)) {
-      setError('Password must be at least 12 characters and include uppercase, lowercase, a number, and a symbol.');
-      return;
-    }
     if (editUserId) {
       const fullName = form.fullName.trim();
       const email = form.email.trim();
@@ -213,7 +196,6 @@ export default function Register() {
           email,
           department,
           position,
-          role: form.role,
           phone: form.phone.trim(),
           gender: form.gender,
           dateOfBirth: form.dateOfBirth || null,
@@ -230,7 +212,6 @@ export default function Register() {
             email,
             department,
             position,
-            role: form.role,
             phone: form.phone.trim(),
             gender: form.gender,
             dateOfBirth: form.dateOfBirth || null,
@@ -260,19 +241,13 @@ export default function Register() {
     setLoading(true);
     try {
       const payload = { ...form };
-      delete payload.confirmPassword;
       delete payload.customDepartment;
       delete payload.customPosition;
-      if (form.role === 'employee') {
-        delete payload.password;
-      }
       payload.department = department;
       payload.position = position;
       payload.faceDescriptor = face;
       const data = await authService.register(payload);
-      setSuccess(form.role === 'employee'
-        ? `Employee "${data.user.fullName}" registered. They must change the server-configured default password at first sign-in.`
-        : `Employee "${data.user.fullName}" registered successfully.`);
+      setSuccess(`Employee "${data.user.fullName}" registered. They must change the server-configured default password at first sign-in.`);
       setForm(INIT); setFace(null);
       setTimeout(() => navigate('/admin/users'), 1500);
     } catch (err) {
@@ -330,6 +305,11 @@ export default function Register() {
 
       {/* ── Form card — max-width 960px ── */}
       <div style={{ maxWidth: '960px' }}>
+        {!editUserId && (
+          <Link className="register-hr-workflow-link" to="/admin/register-hr">
+            Need to create an HR account? Use the separate Admin-only workflow.
+          </Link>
+        )}
         <form onSubmit={handleSubmit} noValidate autoComplete="off">
           <div style={CARD}>
 
@@ -355,14 +335,6 @@ export default function Register() {
                         <EditField label="Phone number" name="phone" type="tel" value={form.phone} onChange={set} />
                         <EditField label="Department" name="department" value={form.department} onChange={set} required />
                         <EditField label="Position" name="position" value={form.position} onChange={set} required />
-                        <div className="employee-edit-field">
-                          <label htmlFor="edit-role">Role</label>
-                          <select id="edit-role" name="role" value={form.role} onChange={set}>
-                            <option value="employee">Employee</option>
-                            <option value="hr">Human Resources</option>
-                            <option value="admin">Administrator</option>
-                          </select>
-                        </div>
                         <div className="employee-edit-field">
                           <label htmlFor="edit-status">Employment status</label>
                           <select id="edit-status" name="status" value={form.status} onChange={set}>
@@ -407,26 +379,10 @@ export default function Register() {
               <FormField label="Employee ID" name="employeeId" value={form.employeeId} onChange={set} required />
             </TwoCol>
 
-            {/* ── Row 2: Email + Role ── */}
+            {/* ── Row 2: Email; the backend always assigns the Employee role. ── */}
             <TwoCol mt>
               <FormField label="Email Address" name="email" type="email" value={form.email} onChange={set} required />
-              <div>
-                <label style={LABEL_STYLE}>
-                  Role <Asterisk />
-                </label>
-                <select
-                  name="role"
-                  value={form.role}
-                  onChange={set}
-                  style={buildInputStyle()}
-                  onFocus={e => { e.target.style.borderColor = '#3b79f6'; e.target.style.boxShadow = '0 0 0 3px rgba(59, 121, 246,0.15)'; }}
-                  onBlur={e  => { e.target.style.borderColor = '#333e55'; e.target.style.boxShadow = 'none'; }}
-                >
-                  <option value="employee">Employee</option>
-                  <option value="hr">Human Resources</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
+              <p className="register-role-note">New accounts created here are Employees. HR accounts use the separate Admin-only workflow.</p>
             </TwoCol>
 
             {/* ── Row 3: Department + Position ── */}
@@ -484,58 +440,9 @@ export default function Register() {
               </div>
             </TwoCol>
 
-            {/* ── Admin and HR accounts set their own initial passwords. ── */}
-            {form.role !== 'employee' && <>
-            <TwoCol mt>
-              {/* Password */}
-              <div>
-                <label htmlFor="password" style={LABEL_STYLE}>
-                  Password <Asterisk />
-                </label>
-                <PasswordInput
-                  id="password"
-                  name="password"
-                  value={form.password}
-                  onChange={set}
-                  show={showPw}
-                  onToggle={() => setShowPw(v => !v)}
-                />
-              </div>
-
-              {/* Confirm Password */}
-              <div>
-                <label htmlFor="confirmPassword" style={LABEL_STYLE}>
-                  Confirm Password <Asterisk />
-                </label>
-                <PasswordInput
-                  id="confirmPassword"
-                  name="confirmPassword"
-                  value={form.confirmPassword}
-                  onChange={set}
-                  show={showCPw}
-                  onToggle={() => setShowCPw(v => !v)}
-                  borderColor={pwMismatch ? '#ef4444' : pwMatch ? '#22c55e' : undefined}
-                />
-                {pwMismatch && (
-                  <p style={{ margin: '5px 0 0', fontSize: '0.75rem', color: '#f87171', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#719ef8', flexShrink: 0 }} />
-                    Passwords do not match
-                  </p>
-                )}
-                {pwMatch && (
-                  <p style={{ margin: '5px 0 0', fontSize: '0.75rem', color: '#4ade80', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <CheckCircle2 size={11} color="#4ade80" />
-                    Passwords match
-                  </p>
-                )}
-              </div>
-            </TwoCol>
-            </>}
-            {form.role === 'employee' && (
-              <p style={{ margin: '20px 0 0', color: 'var(--color-text-secondary)', fontSize: '0.875rem' }}>
-                A secure default password is assigned by the server. The employee must change it before accessing their dashboard.
-              </p>
-            )}
+            <p style={{ margin: '20px 0 0', color: 'var(--color-text-secondary)', fontSize: '0.875rem' }}>
+              A secure default password is assigned by the server. The employee must change it before accessing their dashboard.
+            </p>
             </>}
 
             {/* ── Face Recognition ── */}
@@ -593,19 +500,19 @@ export default function Register() {
               </button>
               <button
                 type="submit"
-                disabled={loading || editLoading || pwMismatch}
+                disabled={loading || editLoading}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '8px',
                   padding: '10px 24px', borderRadius: '10px',
-                  background: loading || editLoading || pwMismatch ? '#1e428a' : '#2567eb',
-                  border: 'none', cursor: loading || editLoading || pwMismatch ? 'not-allowed' : 'pointer',
+                  background: loading || editLoading ? '#1e428a' : '#2567eb',
+                  border: 'none', cursor: loading || editLoading ? 'not-allowed' : 'pointer',
                   fontSize: '0.875rem', fontWeight: 600, color: '#fff',
-                  opacity: loading || editLoading || pwMismatch ? 0.6 : 1,
+                  opacity: loading || editLoading ? 0.6 : 1,
                   transition: 'background 0.15s, opacity 0.15s',
                   boxShadow: '0 4px 12px rgba(37, 103, 235,0.3)',
                 }}
-                onMouseEnter={e => { if (!loading && !editLoading && !pwMismatch) e.currentTarget.style.background = '#3b79f6'; }}
-                onMouseLeave={e => { if (!loading && !editLoading && !pwMismatch) e.currentTarget.style.background = '#2567eb'; }}
+                onMouseEnter={e => { if (!loading && !editLoading) e.currentTarget.style.background = '#3b79f6'; }}
+                onMouseLeave={e => { if (!loading && !editLoading) e.currentTarget.style.background = '#2567eb'; }}
               >
                 <UserPlus size={15} />
                 {editLoading ? 'Loading…' : loading ? (editUserId ? 'Saving…' : 'Registering…') : (editUserId ? 'Save All Changes' : 'Register Employee')}
@@ -729,49 +636,6 @@ function FormField({ label, name, value, onChange, type = 'text', required }) {
         onFocus={() => setFocused(true)}
         onBlur={()  => setFocused(false)}
       />
-    </div>
-  );
-}
-
-function PasswordInput({ id, name, value, onChange, show, onToggle, borderColor }) {
-  const [focused, setFocused] = useState(false);
-  const activeBorder = borderColor ?? (focused ? '#3b79f6' : '#333e55');
-  const activeShadow = focused
-    ? borderColor
-      ? `0 0 0 3px ${borderColor}33`
-      : '0 0 0 3px rgba(59, 121, 246,0.15)'
-    : 'none';
-
-  return (
-    <div style={{ position: 'relative' }}>
-      <input
-        id={id}
-        name={name}
-        type={show ? 'text' : 'password'}
-        value={value}
-        onChange={onChange}
-        required
-        /* no placeholder */
-        style={buildInputStyle({ paddingRight: '40px', borderColor: activeBorder, boxShadow: activeShadow })}
-        onFocus={() => setFocused(true)}
-        onBlur={()  => setFocused(false)}
-      />
-      <button
-        type="button"
-        tabIndex={-1}
-        onClick={onToggle}
-        aria-label={show ? 'Hide password' : 'Show password'}
-        style={{
-          position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
-          background: 'none', border: 'none', cursor: 'pointer',
-          color: '#64748b', display: 'flex', alignItems: 'center', padding: '2px',
-          transition: 'color 0.12s',
-        }}
-        onMouseEnter={e => { e.currentTarget.style.color = '#94a0b8'; }}
-        onMouseLeave={e => { e.currentTarget.style.color = '#64748b'; }}
-      >
-        {show ? <EyeOff size={15} /> : <Eye size={15} />}
-      </button>
     </div>
   );
 }

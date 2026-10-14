@@ -20,20 +20,11 @@ import { attendanceService } from '../services/attendanceService';
 import { formatEthiopianDate, formatEthiopianTime } from '../utils/ethiopianDateTime';
 import useFaceScan from '../hooks/useFaceScan';
 import AttendanceScanner from '../components/AttendanceScanner';
+import PageBackButton from '../components/PageBackButton';
 import {
   Camera, CheckCircle2, XCircle, RefreshCw, Clock,
   LogIn, LogOut, Coffee, CalendarCheck, AlertCircle,
 } from 'lucide-react';
-
-const BACKGROUND_IMAGES = [
-  'mau7.jfif',
-  'mau1.jfif',
-  'mau2.jfif',
-  'mau3.jfif',
-  'mau4.jfif',
-  'mau5.jfif',
-  'mau6.jfif',
-];
 
 /* ── Phase enum ─────────────────────────────────────────────────────────── */
 const PHASE = {
@@ -55,20 +46,20 @@ const PHASE = {
 
 /* ── Status-bar dot + text colour ──────────────────────────────────────── */
 const STATUS_STYLE = {
-  [PHASE.BOOT]:           { dot: '#475569', text: '#64748b' },   // slate
-  [PHASE.IDLE]:           { dot: '#3b79f6', text: '#6093fa' },   // blue
-  [PHASE.SCANNING]:       { dot: '#3b79f6', text: '#6093fa' },   // blue (pulsing)
-  [PHASE.SUCCESS]:        { dot: '#22c55e', text: '#4ade80' },   // GREEN only here
-  [PHASE.CHECKOUT_OK]:    { dot: '#f97316', text: '#fb923c' },   // orange
-  [PHASE.CHECK_IN_REQUIRED]: { dot: '#f59e0b', text: '#fbbf24' },
-  [PHASE.ALREADY]:        { dot: '#f59e0b', text: '#fbbf24' },   // amber
-  [PHASE.MORNING_ACTIVE]: { dot: '#f59e0b', text: '#fbbf24' },   // amber
-  [PHASE.IN_BREAK]:       { dot: '#f59e0b', text: '#fbbf24' },   // amber
-  [PHASE.DAY_COMPLETE]:   { dot: '#f59e0b', text: '#fbbf24' },   // amber
-  [PHASE.TOO_EARLY]:      { dot: '#3878f8', text: '#7da7fc' },   // sky
-  [PHASE.KIOSK_CLOSED]:   { dot: '#f59e0b', text: '#fbbf24' },
-  [PHASE.SPOOF_DETECTED]: { dot: '#ef4444', text: '#f87171' },
-  [PHASE.ERROR]:           { dot: '#ef4444', text: '#f87171' },   // RED only here
+  [PHASE.BOOT]:              { dot: '#64748B', text: '#334155' },
+  [PHASE.IDLE]:              { dot: '#1E3A8A', text: '#1E3A8A' },
+  [PHASE.SCANNING]:          { dot: '#1E3A8A', text: '#1E3A8A' },
+  [PHASE.SUCCESS]:           { dot: '#15803D', text: '#166534' },
+  [PHASE.CHECKOUT_OK]:       { dot: '#C2410C', text: '#9A3412' },
+  [PHASE.CHECK_IN_REQUIRED]: { dot: '#B45309', text: '#92400E' },
+  [PHASE.ALREADY]:           { dot: '#B45309', text: '#92400E' },
+  [PHASE.MORNING_ACTIVE]:    { dot: '#B45309', text: '#92400E' },
+  [PHASE.IN_BREAK]:          { dot: '#B45309', text: '#92400E' },
+  [PHASE.DAY_COMPLETE]:      { dot: '#B45309', text: '#92400E' },
+  [PHASE.TOO_EARLY]:         { dot: '#1E3A8A', text: '#1E3A8A' },
+  [PHASE.KIOSK_CLOSED]:      { dot: '#B45309', text: '#92400E' },
+  [PHASE.SPOOF_DETECTED]:    { dot: '#B91C1C', text: '#B91C1C' },
+  [PHASE.ERROR]:             { dot: '#B91C1C', text: '#B91C1C' },
 };
 
 /* ── Overlay background per phase ──────────────────────────────────────── */
@@ -376,7 +367,7 @@ export default function MarkAttendance() {
     display: 'flex', alignItems: 'center', gap: '10px',
     marginTop: '16px', width: '100%', maxWidth: '576px',
     padding: '10px 16px', borderRadius: '12px',
-    background: '#0f182a', border: '1px solid #1e283b',
+    background: '#F1F5F9', border: '1px solid #E2E8F0',
   };
 
   /* ── Scanning pulse — inline keyframes ── */
@@ -391,50 +382,6 @@ export default function MarkAttendance() {
     .kiosk-spin { animation: kiosk-spin 0.85s linear infinite; }
     @keyframes kiosk-success { 0% { transform: scale(0.75); opacity: 0.4; } 70% { transform: scale(1.08); } 100% { transform: scale(1); opacity: 1; } }
     .kiosk-success-icon { animation: kiosk-success 420ms ease-out both; }
-    .attendance-kiosk-root > *:not(.attendance-kiosk-background) {
-      position: relative;
-      z-index: 2;
-    }
-    .attendance-kiosk-background {
-      position: absolute;
-      inset: 0;
-      z-index: 0;
-      overflow: hidden;
-      pointer-events: none;
-      background: #070d1b;
-    }
-    .attendance-kiosk-background::after {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background:
-        linear-gradient(135deg, rgba(3, 8, 20, 0.48), rgba(6, 15, 34, 0.36) 52%, rgba(5, 12, 28, 0.54)),
-        radial-gradient(circle at 50% 45%, rgba(16, 39, 82, 0.12), rgba(2, 7, 18, 0.26));
-    }
-    .attendance-kiosk-background img {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      object-position: center;
-      opacity: 0;
-      transform: scale(1.06);
-      filter: brightness(1.18) saturate(1.08);
-      animation: kiosk-background-cycle 42s ease-in-out infinite;
-    }
-    @keyframes kiosk-background-cycle {
-      0%, 12% { opacity: 1; transform: scale(1.04); }
-      17%, 100% { opacity: 0; transform: scale(1.12); }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .attendance-kiosk-background img {
-        animation: none;
-        opacity: 0;
-        transform: none;
-      }
-      .attendance-kiosk-background img:first-child { opacity: 1; }
-    }
   `;
 
   return (
@@ -442,42 +389,32 @@ export default function MarkAttendance() {
       <style>{PULSE_CSS}</style>
 
       <div style={{
-        minHeight: '100vh', background: '#070d1b',
+        minHeight: '100vh',
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
         padding: '16px',
         fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
         position: 'relative', isolation: 'isolate',
       }} className="attendance-kiosk-root">
-        <div className="attendance-kiosk-background" aria-hidden="true">
-          {BACKGROUND_IMAGES.map((image, index) => (
-            <img
-              key={image}
-              src={`/login-backgrounds/${image}`}
-              alt=""
-              style={{ animationDelay: `-${index * 6}s` }}
-            />
-          ))}
-        </div>
-
+        <PageBackButton fallback="/" />
         {/* ── Header ── */}
         <div style={{
           width: '100%', maxWidth: '576px', marginBottom: '24px',
           display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
         }}>
           <div>
-            <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#f1f4f9', margin: 0 }}>
+            <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>
               Attendance Set
             </h1>
-            <p style={{ fontSize: '0.875rem', color: '#64748b', margin: '2px 0 0' }}>
+            <p style={{ fontSize: '0.875rem', color: '#475569', margin: '2px 0 0' }}>
               Face Recognition Attendance
             </p>
           </div>
           <div style={{ textAlign: 'right' }}>
-            <p style={{ fontSize: '1.5rem', fontWeight: 700, color: '#f1f4f9', margin: 0, fontVariantNumeric: 'tabular-nums' }}>
+            <p style={{ fontSize: '1.5rem', fontWeight: 700, color: '#0F172A', margin: 0, fontVariantNumeric: 'tabular-nums' }}>
               {formatEthiopianTime(tick, { seconds: true })}
             </p>
-            <p style={{ fontSize: '0.75rem', color: '#64748b', margin: '2px 0 0' }}>
+            <p style={{ fontSize: '0.75rem', color: '#475569', margin: '2px 0 0' }}>
               {formatEthiopianDate(tick, { weekday: 'short', month: 'short', day: 'numeric' })}
             </p>
           </div>
@@ -490,19 +427,19 @@ export default function MarkAttendance() {
               onClick={() => selectMode('checkin')}
               icon={<LogIn  size={28} />}
               label="Check In"
-              accent="#15803d"
-              accentBg="rgba(5,46,22,0.4)"
-              accentHover="rgba(5,46,22,0.6)"
-              textColor="#4ade80"
+              accent="#15803D"
+              accentBg="#15803D"
+              accentHover="#166534"
+              textColor="#FFFFFF"
             />
             <ModeBtn
               onClick={() => selectMode('checkout')}
               icon={<LogOut size={28} />}
               label="Check Out"
-              accent="#c2410c"
-              accentBg="rgba(67,20,7,0.4)"
-              accentHover="rgba(67,20,7,0.6)"
-              textColor="#fb923c"
+              accent="#C2410C"
+              accentBg="#C2410C"
+              accentHover="#9A3412"
+              textColor="#FFFFFF"
             />
           </div>
         )}
@@ -513,10 +450,10 @@ export default function MarkAttendance() {
             width: '100%', maxWidth: '576px', marginBottom: '12px',
             display: 'flex', alignItems: 'center', gap: '8px',
             padding: '8px 16px', borderRadius: '12px',
-            background: isCheckIn ? 'rgba(5, 19, 46,0.5)'  : 'rgba(7, 27, 67,0.5)',
-            border:     isCheckIn ? '1px solid #166534'  : '1px solid #9a3412',
+            background: isCheckIn ? '#F0FDF4' : '#FFF7ED',
+            border:     isCheckIn ? '1px solid #BBF7D0' : '1px solid #FED7AA',
             fontSize: '0.875rem', fontWeight: 600,
-            color: isCheckIn ? '#4ade80' : '#fb923c',
+            color: isCheckIn ? '#166534' : '#9A3412',
           }}>
             {isCheckIn ? <LogIn size={15} /> : <LogOut size={15} />}
             {isCheckIn ? 'Check-In Mode' : 'Check-Out Mode'}
@@ -527,8 +464,8 @@ export default function MarkAttendance() {
         <div style={{
           position: 'relative', width: '100%', maxWidth: '576px',
           aspectRatio: '4/3', borderRadius: '20px', overflow: 'hidden',
-          background: '#0f182a', border: '1px solid #1e283b',
-          boxShadow: '0 25px 60px rgba(0,0,0,0.5)',
+          background: '#FFFFFF', border: '1px solid #CBD5E1',
+          boxShadow: '0 12px 32px rgba(15, 23, 42, 0.12)',
         }}>
           <AttendanceScanner
             videoRef={videoRef}
@@ -663,19 +600,19 @@ export default function MarkAttendance() {
               position: 'absolute', inset: 0,
               display: 'flex', flexDirection: 'column',
               alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(2, 9, 23,0.85)',
+              background: 'rgba(248, 250, 252,0.96)',
             }}>
               <div
                 className="kiosk-spin"
                 style={{
                   width: '40px', height: '40px',
                   borderRadius: '50%',
-                  border: '4px solid #1e283b',
-                  borderTopColor: '#3b79f6',
+                  border: '4px solid #CBD5E1',
+                  borderTopColor: '#1E3A8A',
                   marginBottom: '12px',
                 }}
               />
-              <p style={{ fontSize: '0.875rem', color: '#64748b' }}>Initialising models…</p>
+              <p style={{ fontSize: '0.875rem', color: '#475569' }}>Initialising models…</p>
             </div>
           )}
 
@@ -685,9 +622,9 @@ export default function MarkAttendance() {
               position: 'absolute', inset: 0,
               display: 'flex', flexDirection: 'column',
               alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(2, 9, 23,0.72)',
+              background: '#F8FAFC',
             }}>
-              <Camera size={40} color="#333e55" style={{ marginBottom: '12px' }} />
+              <Camera size={40} color="#64748B" style={{ marginBottom: '12px' }} />
               <p style={{ fontSize: '0.875rem', color: '#475569' }}>Select Check In or Check Out above</p>
             </div>
           )}
@@ -712,14 +649,14 @@ export default function MarkAttendance() {
         </div>
 
         {/* ── Footer ── */}
-        <p style={{ marginTop: '12px', fontSize: '0.75rem', color: '#333e55', textAlign: 'center' }}>
+        <p style={{ marginTop: '12px', fontSize: '0.75rem', color: '#475569', textAlign: 'center' }}>
           Stand in front of the camera · Look straight ahead · Ensure good lighting
         </p>
         <a
           href="/login"
-          style={{ marginTop: '4px', fontSize: '0.75rem', color: '#333e55', textDecoration: 'none', transition: 'color 0.15s' }}
-          onMouseEnter={e => { e.currentTarget.style.color = '#3b79f6'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#333e55'; }}
+          style={{ marginTop: '4px', fontSize: '0.75rem', color: '#1E3A8A', textDecoration: 'none', transition: 'color 0.15s' }}
+          onMouseEnter={e => { e.currentTarget.style.color = '#1E40AF'; }}
+          onMouseLeave={e => { e.currentTarget.style.color = '#1E3A8A'; }}
         >
           Staff login →
         </a>

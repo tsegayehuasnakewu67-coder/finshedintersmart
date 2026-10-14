@@ -1,5 +1,6 @@
 const Attendance = require('../models/Attendance');
-const { getAddisAbabaDateString } = require('../utils/ethiopianTime');
+const ShiftSettings = require('../models/ShiftSettings');
+const { getAttendanceDate } = require('../utils/shiftTime');
 
 const isDateKey = (value) => {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -32,7 +33,14 @@ const reportQuery = (req, res) => {
 
 const getTodayAttendance = async (req, res, next) => {
   try {
-    const date = getAddisAbabaDateString();
+    const now = new Date();
+    const shift = await ShiftSettings.findOne({ _key: 'default' }) || {
+      startHour: 8,
+      startMinute: 30,
+      endHour: 17,
+      endMinute: 0,
+    };
+    const date = getAttendanceDate(now, shift);
     const records = await Attendance.find({ date })
       .sort({ checkInTime: 1, employeeId: 1 })
       .populate('employee', 'employeeId firstName lastName department position')

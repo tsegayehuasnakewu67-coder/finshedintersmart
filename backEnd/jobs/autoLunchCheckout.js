@@ -19,10 +19,10 @@ const Attendance  = require('../models/Attendance');
 const ShiftSettings = require('../models/ShiftSettings');
 const {
   TIME_ZONE,
-  getAddisAbabaDateString,
   getAddisAbabaMinutes,
   createAddisAbabaDateTime,
 } = require('../utils/ethiopianTime');
+const { getAttendanceDate } = require('../utils/shiftTime');
 
 const pad2     = (n) => String(n).padStart(2, '0');
 
@@ -36,7 +36,7 @@ const runAutoLunchCheckout = async () => {
     if (!shift || !shift.lunchEnabled) return; // feature disabled
 
     const now     = new Date();
-    const today   = getAddisAbabaDateString(now);
+    const today   = getAttendanceDate(now, shift);
     const nowMins = getAddisAbabaMinutes(now);
     const lunchMins = shift.lunchStartHour * 60 + shift.lunchStartMinute;
 

@@ -9,9 +9,16 @@ const { logFailedFaceScan } = require('../utils/faceScanAudit');
 const { isValidFaceDescriptor } = require('../utils/faceMatcher');
 const {
   getAddisAbabaDateString,
-  getAddisAbabaMinutes,
   createAddisAbabaDateTime,
 } = require('../utils/ethiopianTime');
+const {
+  getShiftElapsedMinutes,
+  getShiftOffset,
+  getSignedShiftOffset,
+  getAttendanceDate,
+  getCompletedWorkMinutes,
+  calculateAttendanceStatus,
+} = require('../utils/shiftTime');
 
 /**
  * Registered department from User, never the placeholder "General".
@@ -87,10 +94,8 @@ const getShift = async () => {
   };
 };
 
-const beforeLunchStart = shift => toMins(shift.beforeLunchStartHour ?? shift.startHour, shift.beforeLunchStartMinute ?? shift.startMinute);
 const beforeLunchEnd = shift => toMins(shift.beforeLunchEndHour ?? shift.lunchStartHour, shift.beforeLunchEndMinute ?? shift.lunchStartMinute);
 const afterLunchStart = shift => toMins(shift.afterLunchStartHour ?? (shift.lunchStartHour + Math.floor(shift.lunchDuration / 60)), shift.afterLunchStartMinute ?? ((shift.lunchStartMinute + shift.lunchDuration) % 60));
-const afterLunchEnd = shift => toMins(shift.afterLunchEndHour ?? shift.endHour, shift.afterLunchEndMinute ?? shift.endMinute);
 
 /** Convert { hour, minute } to total minutes since midnight */
 const toMins = (h, m) => h * 60 + m;
@@ -162,11 +167,7 @@ const claimScanWindow = async (employee, date, now) => {
  * Late     → arrived after grace period
  */
 const calcStatus = (now, shift) => {
-  const arrivedMins  = getAddisAbabaMinutes(now);
-  const startMins = beforeLunchStart(shift);
-  const deadlineMins = startMins + (shift.gracePeriod || 0);
-  if (arrivedMins <= deadlineMins) return { status: 'Present', lateMinutes: 0 };
-  return { status: 'Late', lateMinutes: arrivedMins - deadlineMins };
+  return calculateAttendanceStatus(now, shift);
 };
 
 /**
@@ -182,7 +183,7 @@ const calcStatus = (now, shift) => {
  *  Lunch window                 │ in_break  (scan shows "you're on break")
  *  After lunchEnd               │ afterlunch_checkin (face scan → check in)
  *  After-lunch session active   │ afterlunch_checkout (face scan → check out)
- *  Shift end passed, no session │ auto_checkout (system sets checkOut = shiftEnd)
+ *  Shift end passed, no session │ auto_checkout (records the actual scan time)
  *  All sessions recorded        │ day_complete
  * ─────────────────────────────────────────────────────────────────────────────
  *
@@ -191,20 +192,27 @@ const calcStatus = (now, shift) => {
  * not by any manual kiosk action.
  */
 const resolveSessionAction = (record, now, shift) => {
-  const nowMins    = getAddisAbabaMinutes(now);
-  const shiftStart = beforeLunchStart(shift);
-  const shiftEnd   = afterLunchEnd(shift);
-  const earlyWindow = shiftStart - 60; // allow early arrivals
+  const elapsed = getShiftElapsedMinutes(now, shift);
+  const shiftEnd = getShiftOffset(
+    shift.afterLunchEndHour ?? shift.endHour,
+    shift.afterLunchEndMinute ?? shift.endMinute,
+    shift,
+  );
+  const earlyWindow = getSignedShiftOffset(
+    shift.beforeLunchStartHour ?? shift.startHour,
+    shift.beforeLunchStartMinute ?? shift.startMinute,
+    shift,
+  ) - 60;
 
   // ── No record yet ──────────────────────────────────────────────────────────
   if (!record) {
-    if (nowMins >= shiftEnd) return 'closed';
-    if (nowMins < earlyWindow) return 'too_early';
+    if (elapsed >= shiftEnd) return 'closed';
+    if (elapsed < earlyWindow) return 'too_early';
 
     if (shift.lunchEnabled) {
-      const lunchEnd = afterLunchStart(shift);
+      const lunchEnd = getShiftOffset(shift.afterLunchStartHour, shift.afterLunchStartMinute, shift);
       // Arrived after lunch with no record → after-lunch session
-      if (nowMins >= lunchEnd) return 'afterlunch_checkin';
+      if (elapsed >= lunchEnd) return 'afterlunch_checkin';
     }
     return 'morning_checkin';
   }
@@ -220,17 +228,21 @@ const resolveSessionAction = (record, now, shift) => {
   // No lunch feature — single session, end-of-day checkout only
   if (!shift.lunchEnabled) {
     if (hasCheckOut) return 'day_complete';
-    if (nowMins >= shiftEnd) return 'auto_checkout';
+    if (elapsed >= shiftEnd) return 'auto_checkout';
     return 'afterlunch_checkout'; // reuse as "end of day" checkout action
   }
 
   // Lunch enabled
-  const lunchStart = beforeLunchEnd(shift);
-  const lunchEnd   = afterLunchStart(shift);
+  const lunchStart = shift.lunchEnabled
+    ? getShiftOffset(shift.beforeLunchEndHour, shift.beforeLunchEndMinute, shift)
+    : null;
+  const lunchEnd = shift.lunchEnabled
+    ? getShiftOffset(shift.afterLunchStartHour, shift.afterLunchStartMinute, shift)
+    : null;
 
   // Auto lunch checkout has happened, waiting for after-lunch check-in
   if (hasCheckOut && !hasAfterLunchCheckIn) {
-    if (nowMins < lunchEnd) return 'in_break';   // still within lunch window
+    if (elapsed < lunchEnd) return 'in_break';   // still within lunch window
     return 'afterlunch_checkin';                  // lunch over, scan to return
   }
 
@@ -241,10 +253,10 @@ const resolveSessionAction = (record, now, shift) => {
 
   // Morning checked in, auto checkout hasn't fired yet
   if (!hasCheckOut) {
-    // Shift end passed without any lunch action → auto checkout the record now
-    if (nowMins >= shiftEnd) return 'auto_checkout';
+    // A scan after shift end is an actual checkout event; never invent one.
+    if (elapsed >= shiftEnd) return 'auto_checkout';
     // Within lunch window — cron hasn't fired yet, tell them it's break time
-    if (nowMins >= lunchStart) return 'in_break';
+    if (elapsed >= lunchStart) return 'in_break';
     // Still working morning — nothing to do at kiosk
     return 'morning_active';
   }
@@ -284,9 +296,9 @@ const markAttendance = async (req, res) => {
       });
     }
 
-    const today = getAddisAbabaDateString();
     const now   = new Date();
     const shift = await getShift();
+    const today = getAttendanceDate(now, shift);
 
     const { record, duplicate } = await claimScanWindow(employee, today, now);
     if (duplicate) {
@@ -308,7 +320,13 @@ const markAttendance = async (req, res) => {
 
     // ── too_early ─────────────────────────────────────────────────────────────
     if (action === 'too_early') {
-      const startMins = beforeLunchStart(shift) - 60;
+      const startMins = toMins(shift.startHour, shift.startMinute)
+        + getSignedShiftOffset(
+          shift.beforeLunchStartHour ?? shift.startHour,
+          shift.beforeLunchStartMinute ?? shift.startMinute,
+          shift,
+        )
+        - 60;
       const opensAt = createAddisAbabaDateTime(today, Math.floor(startMins / 60), startMins % 60);
       return res.status(400).json({
         success: false,
@@ -420,6 +438,7 @@ const markAttendance = async (req, res) => {
 
     // ── afterlunch_checkin (no existing record — arrived only for afternoon) ──
     if (action === 'afterlunch_checkin' && !record) {
+      const { status, lateMinutes } = calcStatus(now, shift);
       const newRecord = await Attendance.create({
         userId:            employee._id,
         employee:          employee.employeeRef || null,
@@ -430,8 +449,8 @@ const markAttendance = async (req, res) => {
         date:              today,
         checkInTime:       now,
         afterLunchCheckIn: now,
-        status:            'Late',
-        lateMinutes:       0,
+        status,
+        lateMinutes,
         matchConfidence:   parseFloat(distance.toFixed(4)),
         confidence:        parseFloat(distance.toFixed(4)),
         livenessScore:     1,
@@ -450,6 +469,7 @@ const markAttendance = async (req, res) => {
           employee:          empInfo,
           afterLunchCheckIn: newRecord.afterLunchCheckIn,
           status:            newRecord.status,
+          lateMinutes:       newRecord.lateMinutes,
           date:              newRecord.date,
           session:           'afterlunch',
         },
@@ -509,19 +529,16 @@ const markAttendance = async (req, res) => {
 
     // ── auto_checkout (shift ended, no lunch session recorded) ──────────────
     if (action === 'auto_checkout') {
-      // Set checkout to official shift-end time
-      const endMins = afterLunchEnd(shift);
-      const shiftEndTime = createAddisAbabaDateTime(today, Math.floor(endMins / 60), endMins % 60);
-
-      record.checkOutTime = shiftEndTime;
+      // The scan is the actual checkout event; do not backdate it to shift end.
+      record.checkOutTime = now;
       await record.save();
-      await notifyAttendanceEvent(employee, shift, 'check-out', { time: shiftEndTime, status: record.status, auto: true });
+      await notifyAttendanceEvent(employee, shift, 'check-out', { time: now, status: record.status });
 
       return res.status(200).json({
         success: true,
         action: 'auto_checkout',
         autoCheckout: true,
-        message: `${employee.fullName}, your shift ended. Auto check-out applied at ${fmtTime(shiftEndTime)}.`,
+        message: `${employee.fullName}, your shift ended. Your check-out was recorded at ${fmtTime(now)}.`,
         data: {
           employee:    empInfo,
           checkInTime:  record.checkInTime,
@@ -596,9 +613,9 @@ const checkOutAttendance = async (req, res) => {
       });
     }
 
-    const today = getAddisAbabaDateString();
     const now   = new Date();
     const shift = await getShift();
+    const today = getAttendanceDate(now, shift);
 
     const { record, duplicate } = await claimScanWindow(employee, today, now);
     if (duplicate) {
@@ -690,18 +707,21 @@ const checkOutAttendance = async (req, res) => {
     await record.save();
     await notifyAttendanceEvent(employee, shift, 'check-out', { time: now, status: record.status });
 
-    /* Calculate working hours */
-    const checkinMs   = new Date(record.checkInTime).getTime();
-    const checkoutMs  = now.getTime();
-    const workedMins  = Math.max(0, Math.round((checkoutMs - checkinMs) / 60000));
-    const workedHrs   = Math.floor(workedMins / 60);
-    const workedMin   = workedMins % 60;
-    const workedLabel = `${workedHrs}h ${workedMin > 0 ? workedMin + 'm' : ''}`.trim();
+    const workedMins = getCompletedWorkMinutes(record, shift);
+    const workedHrs = workedMins === null ? null : Math.floor(workedMins / 60);
+    const workedMin = workedMins === null ? null : workedMins % 60;
+    const workedLabel = workedMins === null
+      ? null
+      : `${workedHrs}h ${workedMin > 0 ? workedMin + 'm' : ''}`.trim();
 
     /* Early departure detection against shift end */
-    const shiftEndMins  = afterLunchEnd(shift);
-    const checkoutMins  = getAddisAbabaMinutes(now);
-    const earlyMins     = Math.max(0, shiftEndMins - checkoutMins);
+    const shiftDuration = getShiftOffset(
+      shift.afterLunchEndHour ?? shift.endHour,
+      shift.afterLunchEndMinute ?? shift.endMinute,
+      shift,
+    );
+    const checkoutElapsed = getShiftElapsedMinutes(now, shift);
+    const earlyMins = Math.max(0, shiftDuration - checkoutElapsed);
     const earlyLabel    = earlyMins > 0
       ? (earlyMins >= 60
           ? `Left ${Math.floor(earlyMins / 60)}h ${earlyMins % 60 > 0 ? earlyMins % 60 + 'm' : ''} early`.trim()
@@ -711,7 +731,7 @@ const checkOutAttendance = async (req, res) => {
     return res.status(200).json({
       success: true,
       action:  checkoutField === 'afterLunchCheckOut' ? 'afterlunch_checkout' : 'checkout',
-      message: `Goodbye, ${employee.fullName}! Safe travels. (Worked: ${workedLabel})`,
+      message: `Goodbye, ${employee.fullName}! Safe travels.${workedLabel ? ` (Worked: ${workedLabel})` : ''}`,
       data: {
         employee:           empInfo,
         checkInTime:        record.checkInTime,
@@ -721,6 +741,7 @@ const checkOutAttendance = async (req, res) => {
         status:             record.status,
         date:               record.date,
         workedLabel,
+        workedMinutes: workedMins,
         earlyLabel,
         session: checkoutField === 'afterLunchCheckOut' ? 'afterlunch_checkout' : 'checkout',
       },
@@ -747,41 +768,45 @@ const getKioskStatus = async (req, res) => {
   try {
     const shift = await getShift();
     const now   = new Date();
-    const nowMins = getAddisAbabaMinutes(now);
-
-    const shiftStartMins = beforeLunchStart(shift);
-    const shiftEndMins   = afterLunchEnd(shift);
-    const lunchStartMins = shift.lunchEnabled
-      ? beforeLunchEnd(shift)
+    const elapsed = getShiftElapsedMinutes(now, shift);
+    const shiftEndOffset = getShiftOffset(
+      shift.afterLunchEndHour ?? shift.endHour,
+      shift.afterLunchEndMinute ?? shift.endMinute,
+      shift,
+    );
+    const lunchStartMins = shift.lunchEnabled ? beforeLunchEnd(shift) : null;
+    const lunchEndMins = shift.lunchEnabled ? afterLunchStart(shift) : null;
+    const lunchStartOffset = shift.lunchEnabled
+      ? getShiftOffset(shift.beforeLunchEndHour, shift.beforeLunchEndMinute, shift)
       : null;
-    const lunchEndMins = lunchStartMins !== null
-      ? afterLunchStart(shift)
+    const lunchEndOffset = shift.lunchEnabled
+      ? getShiftOffset(shift.afterLunchStartHour, shift.afterLunchStartMinute, shift)
       : null;
 
     // Determine global kiosk mode
     let kioskMode = 'morning'; // default
     if (shift.lunchEnabled) {
-      if (lunchStartMins !== null && nowMins >= lunchStartMins && nowMins < lunchEndMins) {
+      if (elapsed >= lunchStartOffset && elapsed < lunchEndOffset) {
         kioskMode = 'break';
-      } else if (lunchEndMins !== null && nowMins >= lunchEndMins) {
+      } else if (elapsed >= lunchEndOffset) {
         kioskMode = 'afterlunch';
       }
     }
-    if (nowMins >= shiftEndMins) kioskMode = 'closed';
+    if (elapsed >= shiftEndOffset) kioskMode = 'closed';
 
     return res.json({
       success: true,
       data: {
         shift: {
-          startHour:        Math.floor(shiftStartMins / 60),
-          startMinute:      shiftStartMins % 60,
+          startHour:        shift.startHour,
+          startMinute:      shift.startMinute,
           gracePeriod:      shift.gracePeriod,
-          endHour:          Math.floor(shiftEndMins / 60),
-          endMinute:        shiftEndMins % 60,
+          endHour:          shift.afterLunchEndHour ?? shift.endHour,
+          endMinute:        shift.afterLunchEndMinute ?? shift.endMinute,
           lunchEnabled:     shift.lunchEnabled,
-          lunchStartHour:   lunchStartMins === null ? null : Math.floor(lunchStartMins / 60),
-          lunchStartMinute: lunchStartMins === null ? null : lunchStartMins % 60,
-          lunchDuration:    lunchStartMins === null ? null : lunchEndMins - lunchStartMins,
+          lunchStartHour:   lunchStartMins === null ? null : shift.lunchStartHour,
+          lunchStartMinute: lunchStartMins === null ? null : shift.lunchStartMinute,
+          lunchDuration:    lunchStartMins === null ? null : shift.lunchDuration,
         },
         kioskMode,  // 'morning' | 'break' | 'afterlunch' | 'closed'
         serverTime: now.toISOString(),
@@ -914,14 +939,30 @@ const getMyAttendance = async (req, res) => {
 // GET /api/attendance/dashboard  — admin stats
 const getDashboard = async (req, res) => {
   try {
-    const today = getAddisAbabaDateString();
     const now   = new Date();
-    const monthStart = `${getAddisAbabaDateString(now).slice(0, 7)}-01`;
+    const shift = await getShift();
+    const today = getAttendanceDate(now, shift);
+    const selectedMonth = req.query.month || today.slice(0, 7);
+    const [selectedYear, selectedMonthNumber] = selectedMonth.split('-').map(Number);
+    const monthStart = `${selectedMonth}-01`;
+    const monthEnd = new Date(Date.UTC(selectedYear, selectedMonthNumber, 0))
+      .toISOString()
+      .slice(0, 10);
+    const trendStartDate = new Date(`${today}T00:00:00.000Z`);
+    trendStartDate.setUTCDate(trendStartDate.getUTCDate() - 6);
+    const weekStart = trendStartDate.toISOString().slice(0, 10);
 
     const [totalEmployees, [dashboard = {}]] = await Promise.all([
       Employee.countDocuments({ status: 'Active' }),
       Attendance.aggregate([
-        { $match: { date: { $gte: monthStart, $lte: today } } },
+        {
+          $match: {
+            $or: [
+              { date: { $gte: weekStart, $lte: today } },
+              { date: { $gte: monthStart, $lte: monthEnd } },
+            ],
+          },
+        },
         {
           $facet: {
             todaySummary: [
@@ -943,16 +984,32 @@ const getDashboard = async (req, res) => {
               },
             ],
             monthlyTrend: [
+              { $match: { date: { $gte: monthStart, $lte: monthEnd } } },
               {
                 $group: {
                   _id: '$date',
                   present: { $sum: { $cond: [{ $eq: ['$status', 'Present'] }, 1, 0] } },
                   late: { $sum: { $cond: [{ $eq: ['$status', 'Late'] }, 1, 0] } },
+                  absent: { $sum: { $cond: [{ $eq: ['$status', 'Absent'] }, 1, 0] } },
                   total: { $sum: 1 },
                 },
               },
               { $sort: { _id: 1 } },
               { $limit: 31 },
+            ],
+            weeklyTrend: [
+              { $match: { date: { $gte: weekStart, $lte: today } } },
+              {
+                $group: {
+                  _id: '$date',
+                  present: { $sum: { $cond: [{ $eq: ['$status', 'Present'] }, 1, 0] } },
+                  late: { $sum: { $cond: [{ $eq: ['$status', 'Late'] }, 1, 0] } },
+                  absent: { $sum: { $cond: [{ $eq: ['$status', 'Absent'] }, 1, 0] } },
+                  total: { $sum: 1 },
+                },
+              },
+              { $sort: { _id: 1 } },
+              { $limit: 7 },
             ],
             deptStats: [
               { $match: { date: today } },
@@ -970,16 +1027,18 @@ const getDashboard = async (req, res) => {
     );
     const presentToday = summaryByStatus.Present || 0;
     const lateToday = summaryByStatus.Late || 0;
+    const leaveToday = summaryByStatus.Leave || 0;
 
     const checkedIn   = presentToday + lateToday;
-    const absentToday = Math.max(0, totalEmployees - checkedIn);
+    const absentToday = Math.max(0, totalEmployees - checkedIn - leaveToday);
 
     return res.json({
       success: true,
       data: {
-        summary: { totalEmployees, presentToday, lateToday, absentToday, checkedIn },
+        summary: { totalEmployees, presentToday, lateToday, absentToday, leaveToday, checkedIn },
         recentCheckIns: dashboard.todayRecords || [],
         monthlyTrend: dashboard.monthlyTrend || [],
+        weeklyTrend: dashboard.weeklyTrend || [],
         deptStats: dashboard.deptStats || [],
       },
     });
@@ -1232,5 +1291,6 @@ module.exports = {
   getMyStats,
   getAnalytics,
   notifyAttendanceEvent,
+  calcStatus,
   resolveSessionAction,
 };

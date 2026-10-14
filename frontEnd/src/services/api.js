@@ -6,8 +6,22 @@ const api = axios.create({
   timeout: 20000,
 });
 
+export const getStoredToken = () => (
+  localStorage.getItem('sat_token') || sessionStorage.getItem('sat_token')
+);
+
+export const clearStoredToken = () => {
+  localStorage.removeItem('sat_token');
+  sessionStorage.removeItem('sat_token');
+};
+
+export const setStoredToken = (token, remember = true) => {
+  clearStoredToken();
+  (remember ? localStorage : sessionStorage).setItem('sat_token', token);
+};
+
 api.interceptors.request.use(cfg => {
-  const t = localStorage.getItem('sat_token');
+  const t = getStoredToken();
   if (t) cfg.headers.Authorization = `Bearer ${t}`;
   return cfg;
 });
@@ -16,7 +30,7 @@ api.interceptors.response.use(
   r => r,
   err => {
     if (err.response?.status === 401) {
-      localStorage.removeItem('sat_token');
+      clearStoredToken();
       window.dispatchEvent(new Event('sat:unauthorized'));
     }
     const requestError = new Error(err.response?.data?.message || err.message || 'Request failed');

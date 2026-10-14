@@ -38,14 +38,18 @@ ADMIN_PASSWORD=<a unique strong password>
 DEFAULT_EMPLOYEE_PASSWORD=<a unique strong password>
 CLIENT_URL=http://localhost:5173
 CLIENT_URLS=http://localhost:5173
-MAIL_HOST=<SMTP host>
-MAIL_PORT=587
-MAIL_SECURE=false
-MAIL_USER=<SMTP username>
-MAIL_PASSWORD=<SMTP password>
-MAIL_FROM=<verified sender address>
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=<sending Gmail address>
+SMTP_PASS=<Gmail App Password>
+EMAIL_FROM=Smart Attendance <sending Gmail address>
 API_RATE_LIMIT_MAX=100
+ADMIN_MESSAGES_RATE_LIMIT_MAX=300
 LOGIN_RATE_LIMIT_MAX=10
+PASSWORD_RESET_RATE_LIMIT_MAX=5
+PASSWORD_RESET_VERIFY_RATE_LIMIT_MAX=15
+CONTACT_RATE_LIMIT_MAX=5
 ATTENDANCE_SCAN_RATE_LIMIT_MAX=10
 FACE_REGISTER_RATE_LIMIT_MAX=1200
 MONGODB_MAX_POOL_SIZE=20
@@ -75,6 +79,14 @@ before running the command. If that email already belongs to an Admin, seeding
 does not change its password; use the account's existing password or the
 Forgot Password flow to change it.
 
+Public registration is disabled: `/signup` redirects to `/login`, and the
+legacy `POST /api/auth/signup` endpoint returns HTTP 403. Admins create
+employees from the protected Admin dashboard; `POST /api/auth/register`
+requires an authenticated Admin and always assigns the Employee role on the
+server. HR accounts use the separate protected `/admin/register-hr` page and
+`POST /api/auth/register-hr` endpoint. Generic account updates cannot promote
+an account to Admin or HR.
+
 Admin-created employee accounts use `DEFAULT_EMPLOYEE_PASSWORD`. Keep it in
 the backend environment only, deliver it to new employees through an approved
 secure channel, and change it before deployment. Employees sign in with their
@@ -85,12 +97,53 @@ and invalidate prior JWTs. Admins can reset employee accounts to the configured
 default password; resetting an Admin or HR account sends a single-use reset
 link instead.
 
-Forgot/reset links require SMTP settings (`MAIL_HOST`, `MAIL_PORT`, `MAIL_SECURE`,
-`MAIL_USER`, `MAIL_PASSWORD`, and `MAIL_FROM`). Reset tokens are random,
-single-use, stored only as hashes, and expire after 15 minutes. Without SMTP,
-the forgot-password endpoint reports that recovery is unavailable instead of
-claiming that a reset email was sent. Configure SMTP before relying on email
+Forgot Password sends a cryptographically random six-digit code to the registered
+account email. Codes are stored as keyed hashes, expire after 10 minutes, permit
+five attempts, and have a 60-second resend cooldown. Successful verification
+creates a single-use reset grant, stored only as a hash and held by the browser
+in session storage until password reset. Previously issued reset links remain
+supported for Admin/HR reset flows and expire after 15 minutes. Both workflows
+use SMTP settings (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`,
+`SMTP_PASS`, and `EMAIL_FROM`). Without SMTP, the API returns a safe
+configuration error and sends no code. Configure SMTP before relying on email
 recovery.
+
+For Gmail, enable two-step verification on the sender account, create a Google
+App Password from Google Account security settings when eligible, and put it in
+`SMTP_PASS` in `backEnd/.env` (never in chat or frontend code). Set `SMTP_USER`
+and `EMAIL_FROM` to the sending Gmail address, then restart the backend. Verify
+the configuration without displaying credentials by running
+`npm --prefix backEnd run email:verify` from the repository root.
+
+Public Contact form submissions are rate limited by `CONTACT_RATE_LIMIT_MAX`,
+deduplicated using a client-generated request key, and stored in the
+`contactmessages` MongoDB collection. A persisted unread `contact_message`
+notification is created for each active Admin and appears in the topbar bell;
+the bell refreshes every 30 seconds and links directly to the ticket in the
+Admin Contact Inbox. Notification records are scoped to their recipient and
+stored in MongoDB. The Admin Contact Inbox
+is protected by both JWT authentication and Admin-role authorization; it supports
+search by ticket ID/name/email/subject, Pending/In Progress/Replied/Closed status
+filters, read state, reply history, and confirmation-based delete. Replies are
+protected by a dedicated `ADMIN_MESSAGES_RATE_LIMIT_MAX` quota in addition to
+the Admin authorization check. Replies are saved before notification delivery;
+in-app notification and email delivery results are reported separately.
+Authenticated senders receive an in-app notification and read the conversation
+in My Messages. Anonymous replies are emailed to the submitted address using
+the existing SMTP environment values; the email includes the original message
+and Admin reply. Their delivery outcome (`sent`, `failed`, or `not_configured`)
+is stored on the ticket and shown in the Inbox. Configure the existing SMTP
+environment values to enable reply emails. No SMTP credentials belong in
+frontend configuration.
+
+Employees can submit account-linked tickets and view their own ticket history and
+Admin replies at `/me/messages`. Ticket ownership is attached from the verified
+JWT account; the API never uses a submitted user ID, email address, or ticket ID
+to authorize employee reads. Anonymous tickets have no public lookup endpoint,
+so a ticket ID alone cannot expose the message or reply history. Anonymous
+senders receive replies by email only when SMTP is configured. Employee follow-up
+replies are currently disabled; employees can reply to the configured support
+email or open another ticket.
 
 The new password fields are additive. Existing user records with no
 `mustChangePassword` value remain eligible to sign in normally; existing
@@ -110,11 +163,10 @@ the `Africa/Addis_Ababa` time zone (UTC+03:00). The admin Shift Settings page
 keeps the current work schedule at 08:30–17:00 with a 5-minute grace period
 and lunch disabled unless an administrator changes it.
 
-Dates and clock times are displayed in the `Africa/Addis_Ababa` time zone;
-dates use the Gregorian calendar and times use the 24-hour format. MongoDB
-timestamps remain stored in UTC and are converted for display. Attendance date
-keys and date-filter inputs remain Gregorian `YYYY-MM-DD` values for API and
-database compatibility.
+Dates are displayed using the Ethiopian calendar, and clock times use the
+24-hour format in `Africa/Addis_Ababa`. MongoDB timestamps remain stored in UTC
+and are converted for display. Attendance date keys and date-filter inputs
+remain Gregorian `YYYY-MM-DD` values for API and database compatibility.
 
 ## Seed the database
 
@@ -158,7 +210,8 @@ The face-api.js model manifests and weight shards must be available under
 `frontEnd/public/models` for registration and the camera kiosk. The application
 uses 128-value face descriptors and a Euclidean match threshold of `0.6`.
 New check-ins are closed at the configured shift end; employees with an
-existing attendance record can still scan to complete checkout.
+existing attendance record can still scan to complete checkout. Checkout times
+are recorded from the actual scan, and missing check-outs are not synthesized.
 
 On the Admin > Employees page, **Bulk upload** accepts the downloadable CSV
 template. To enroll faces in the same batch, also select one JPEG, PNG, or WebP
@@ -224,6 +277,17 @@ Addis-Ababa `YYYY-MM-DD` date key and liveness challenge flow:
 Protected routes continue to use the existing JWT and role middleware.
 Validation failures use a consistent `{ success: false, error, message }`
 response shape, and unknown routes return a structured 404.
+
+Administrators can review sensitive account, attendance correction, leave,
+shift-configuration, failed-login, and face-verification events at
+`/admin/audit-logs`. The API at `GET /api/admin/audit-logs` is admin-only,
+paginated, and supports `page`, `limit`, `action`, `resourceType`, `from`, and
+`to` filters. Failed face scans are retained in the existing 90-day
+`FaceScanAttempt` collection and are available from the separate
+**Face verification failures** view. Audit details intentionally omit
+passwords, tokens, and biometric descriptors. If an operation succeeds while
+MongoDB cannot persist its audit event, the response includes an `auditWarning`
+and the backend logs the failure.
 
 Admin sign-in uses the `ADMIN_EMAIL` and `ADMIN_PASSWORD` values configured in
 `backEnd/.env`. Successful login returns a JWT; protected API requests use it

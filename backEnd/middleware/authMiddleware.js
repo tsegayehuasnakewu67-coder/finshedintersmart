@@ -15,10 +15,12 @@ const getBearerToken = (req) => {
   return token;
 };
 
-const protect = async (req, res, next) => {
+const authenticate = async (req, res, next, optional = false) => {
   const token = getBearerToken(req);
 
   if (!token) {
+    if (optional && !req.headers.authorization) return next();
+    if (optional) return res.status(401).json({ success: false, message: 'Invalid authorization header.' });
     return res.status(401).json({ success: false, message: 'No token provided.' });
   }
 
@@ -52,9 +54,17 @@ const protect = async (req, res, next) => {
   }
 };
 
+const protect = (req, res, next) => authenticate(req, res, next);
+const optionalProtect = (req, res, next) => authenticate(req, res, next, true);
+
 const adminOnly = (req, res, next) => {
   if (req.user?.role === 'admin') return next();
   return res.status(403).json({ success: false, message: 'Admin access required.' });
+};
+
+const employeeOnly = (req, res, next) => {
+  if (req.user?.role === 'employee') return next();
+  return res.status(403).json({ success: false, message: 'Employee access required.' });
 };
 
 const adminOrHR = (req, res, next) => {
@@ -67,4 +77,4 @@ const employeeOrAdmin = (req, res, next) => {
   return res.status(403).json({ success: false, message: 'Forbidden.' });
 };
 
-module.exports = { protect, adminOnly, adminOrHR, employeeOrAdmin };
+module.exports = { protect, optionalProtect, adminOnly, employeeOnly, adminOrHR, employeeOrAdmin };

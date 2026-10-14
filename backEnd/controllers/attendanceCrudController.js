@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Attendance = require('../models/Attendance');
 const Employee = require('../models/Employee');
+const { recordAuditEvent, auditWarning } = require('../utils/auditLog');
 
 const validDate = (date) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
@@ -100,7 +101,19 @@ const createAttendance = async (req, res) => {
       matchConfidence: confidence,
       notes,
     });
-    return res.status(201).json({ success: true, message: 'Attendance recorded.', data: { record } });
+    const auditRecorded = await recordAuditEvent(req, {
+      action: 'ATTENDANCE_CREATED',
+      resourceType: 'attendance',
+      resourceId: record._id,
+      summary: `Created attendance record for ${record.employeeId} on ${record.date}.`,
+      details: {
+        employeeId: record.employeeId,
+        date: record.date,
+        status: record.status,
+        recognitionMethod: record.recognitionMethod,
+      },
+    });
+    return res.status(201).json({ success: true, message: 'Attendance recorded.', data: { record }, ...auditWarning(auditRecorded) });
   } catch (error) {
     if (error.code === 11000) {
       return res.status(409).json({ success: false, message: 'Attendance already exists for this employee and date.' });
@@ -124,9 +137,33 @@ const updateAttendance = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Date must use YYYY-MM-DD.' });
     }
     if (updates.confidence !== undefined) updates.matchConfidence = updates.confidence;
+    const previousRecord = await Attendance.findById(req.params.id);
+    if (!previousRecord) return res.status(404).json({ success: false, message: 'Attendance record not found.' });
     const record = await Attendance.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
     if (!record) return res.status(404).json({ success: false, message: 'Attendance record not found.' });
-    return res.json({ success: true, message: 'Attendance updated.', data: { record } });
+    const auditRecorded = await recordAuditEvent(req, {
+      action: 'ATTENDANCE_CORRECTED',
+      resourceType: 'attendance',
+      resourceId: record._id,
+      summary: `Corrected attendance record for ${record.employeeId} on ${record.date}.`,
+      details: {
+        employeeId: record.employeeId,
+        before: {
+          date: previousRecord.date,
+          status: previousRecord.status,
+          checkIn: previousRecord.checkIn,
+          checkOut: previousRecord.checkOut,
+        },
+        after: {
+          date: record.date,
+          status: record.status,
+          checkIn: record.checkIn,
+          checkOut: record.checkOut,
+        },
+        changedFields: Object.keys(updates),
+      },
+    });
+    return res.json({ success: true, message: 'Attendance updated.', data: { record }, ...auditWarning(auditRecorded) });
   } catch (error) {
     if (error.code === 11000) return res.status(409).json({ success: false, message: 'Attendance already exists for this employee and date.' });
     if (error.name === 'ValidationError') return res.status(400).json({ success: false, message: error.message });
@@ -139,7 +176,14 @@ const deleteAttendance = async (req, res) => {
   try {
     const record = await Attendance.findByIdAndDelete(req.params.id);
     if (!record) return res.status(404).json({ success: false, message: 'Attendance record not found.' });
-    return res.json({ success: true, message: 'Attendance record deleted.' });
+    const auditRecorded = await recordAuditEvent(req, {
+      action: 'ATTENDANCE_DELETED',
+      resourceType: 'attendance',
+      resourceId: record._id,
+      summary: `Deleted attendance record for ${record.employeeId} on ${record.date}.`,
+      details: { employeeId: record.employeeId, date: record.date, status: record.status },
+    });
+    return res.json({ success: true, message: 'Attendance record deleted.', ...auditWarning(auditRecorded) });
   } catch {
     return res.status(500).json({ success: false, message: 'Unable to delete attendance record.' });
   }

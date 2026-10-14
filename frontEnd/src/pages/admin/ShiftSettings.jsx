@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { shiftService } from '../../services/shiftService';
+import { getShiftPreview, validateShiftForm } from '../../utils/shiftCalculations';
 import { Clock, Save, Info, CheckCircle2, Loader2, AlertTriangle, UtensilsCrossed, Bell } from 'lucide-react';
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -24,8 +25,31 @@ const INIT = {
   notifyCheckOut: true,
 };
 
+const fromSettings = (d) => ({
+  startHour: d.startHour ?? 8,
+  startMinute: d.startMinute ?? 30,
+  gracePeriod: d.gracePeriod ?? 5,
+  endHour: d.endHour ?? 17,
+  endMinute: d.endMinute ?? 0,
+  lunchEnabled: d.lunchEnabled ?? false,
+  lunchStartHour: d.lunchStartHour ?? 12,
+  lunchStartMinute: d.lunchStartMinute ?? 0,
+  lunchDuration: d.lunchDuration ?? 60,
+  beforeLunchStartHour: d.beforeLunchStartHour ?? 8,
+  beforeLunchStartMinute: d.beforeLunchStartMinute ?? 30,
+  beforeLunchEndHour: d.beforeLunchEndHour ?? 12,
+  beforeLunchEndMinute: d.beforeLunchEndMinute ?? 0,
+  afterLunchStartHour: d.afterLunchStartHour ?? 13,
+  afterLunchStartMinute: d.afterLunchStartMinute ?? 0,
+  afterLunchEndHour: d.afterLunchEndHour ?? 17,
+  afterLunchEndMinute: d.afterLunchEndMinute ?? 0,
+  notifyCheckIn: d.notifyCheckIn ?? true,
+  notifyCheckOut: d.notifyCheckOut ?? true,
+});
+
 export default function ShiftSettings() {
   const [form,    setForm]    = useState(INIT);
+  const [savedForm, setSavedForm] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving,  setSaving]  = useState(false);
   const [error,   setError]   = useState('');
@@ -33,65 +57,75 @@ export default function ShiftSettings() {
 
   useEffect(() => {
     shiftService.getSettings()
-      .then(d => setForm({
-        startHour:        d.startHour        ?? 8,
-        startMinute:      d.startMinute      ?? 30,
-        gracePeriod:      d.gracePeriod      ?? 5,
-        endHour:          d.endHour          ?? 17,
-        endMinute:        d.endMinute        ?? 0,
-        lunchEnabled:     d.lunchEnabled     ?? false,
-        lunchStartHour:   d.lunchStartHour   ?? 12,
-        lunchStartMinute: d.lunchStartMinute ?? 0,
-        lunchDuration:    d.lunchDuration    ?? 60,
-        beforeLunchStartHour: d.beforeLunchStartHour ?? 8,
-        beforeLunchStartMinute: d.beforeLunchStartMinute ?? 30,
-        beforeLunchEndHour: d.beforeLunchEndHour ?? 12,
-        beforeLunchEndMinute: d.beforeLunchEndMinute ?? 0,
-        afterLunchStartHour: d.afterLunchStartHour ?? 13,
-        afterLunchStartMinute: d.afterLunchStartMinute ?? 0,
-        afterLunchEndHour: d.afterLunchEndHour ?? 17,
-        afterLunchEndMinute: d.afterLunchEndMinute ?? 0,
-        notifyCheckIn: d.notifyCheckIn ?? true,
-        notifyCheckOut: d.notifyCheckOut ?? true,
-      }))
-      .catch(e => setError(e.message))
+      .then(d => {
+        const loaded = fromSettings(d || INIT);
+        setForm(loaded);
+        setSavedForm(loaded);
+      })
+      .catch(e => setError(e.response?.data?.message || e.message))
       .finally(() => setLoading(false));
   }, []);
 
-  const set    = (field, val) => { setForm(p => ({ ...p, [field]: Number(val) })); setSuccess(''); };
+  const set = (field, val) => {
+    const numericValue = Number(val);
+    setForm(previous => {
+      const next = { ...previous, [field]: numericValue };
+      if (
+        (field === 'startHour' || field === 'startMinute')
+        && previous.beforeLunchStartHour === previous.startHour
+        && previous.beforeLunchStartMinute === previous.startMinute
+      ) {
+        next.beforeLunchStartHour = next.startHour;
+        next.beforeLunchStartMinute = next.startMinute;
+      }
+      if (
+        (field === 'endHour' || field === 'endMinute')
+        && previous.afterLunchEndHour === previous.endHour
+        && previous.afterLunchEndMinute === previous.endMinute
+      ) {
+        next.afterLunchEndHour = next.endHour;
+        next.afterLunchEndMinute = next.endMinute;
+      }
+      return next;
+    });
+    setSuccess('');
+  };
   const toggle = ()           => { setForm(p => ({ ...p, lunchEnabled: !p.lunchEnabled })); setSuccess(''); };
 
   const handleSave = async e => {
     e.preventDefault();
     setError(''); setSuccess('');
+    const validationError = validateShiftForm(form);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
     setSaving(true);
     try {
-      await shiftService.updateSettings(form);
+      const response = await shiftService.updateSettings(form);
+      const saved = fromSettings(response.data);
+      setForm(saved);
+      setSavedForm(saved);
       setSuccess('Shift settings saved successfully.');
     } catch (err) {
-      setError(err.message);
+      setError(err.response?.data?.message || err.message);
     } finally {
       setSaving(false);
     }
   };
 
   /* ── Derived preview ── */
-  const deadlineMins  = form.startHour * 60 + form.startMinute + form.gracePeriod;
-  const deadline      = { h: Math.floor(deadlineMins / 60) % 24, m: deadlineMins % 60 };
+  const { grossMinutes: grossMins, netMinutes: netMins, deadlineHour, deadlineMinute } = getShiftPreview(form);
   const lunchEnd      = addMins(form.lunchStartHour, form.lunchStartMinute, form.lunchDuration);
 
   const startLabel    = fmt24(form.startHour,       form.startMinute);
-  const deadlineLabel = fmt24(deadline.h,            deadline.m);
+  const deadlineLabel = fmt24(deadlineHour,          deadlineMinute);
   const endLabel      = fmt24(form.endHour,          form.endMinute);
   const lunchStartLbl = fmt24(form.lunchStartHour,   form.lunchStartMinute);
   const lunchEndLbl   = fmt24(lunchEnd.h,            lunchEnd.m);
-
-  // Net working hours = (end - start) - lunch duration
-  const grossMins = (form.endHour * 60 + form.endMinute) - (form.startHour * 60 + form.startMinute);
-  const netMins   = form.lunchEnabled ? grossMins - form.lunchDuration : grossMins;
-  const netLabel  = netMins > 0
-    ? `${Math.floor(netMins / 60)}h ${netMins % 60 > 0 ? netMins % 60 + 'm' : ''}`.trim()
-    : '—';
+  const netLabel = `${Math.floor(netMins / 60)}h ${netMins % 60 > 0 ? netMins % 60 + 'm' : ''}`.trim();
+  const validationError = validateShiftForm(form);
+  const hasUnsavedChanges = savedForm && JSON.stringify(form) !== JSON.stringify(savedForm);
 
   if (loading) return (
     <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'60vh', color:'#94a0b8', gap:10 }}>
@@ -200,8 +234,8 @@ export default function ShiftSettings() {
                   <p style={{ fontSize:11, fontWeight:700, color:'#64748b', textTransform:'uppercase',
                     letterSpacing:'0.05em', margin:'0 0 10px' }}>Lunch Duration</p>
                   <NumField
-                    label="Duration (minutes, 0–180)"
-                    value={form.lunchDuration} min={0} max={180}
+                    label="Duration (minutes, 1–180)"
+                    value={form.lunchDuration} min={1} max={180}
                     onChange={v => set('lunchDuration', v)} wide
                   />
                   <p style={{ fontSize:11, color:'#475569', marginTop:6 }}>
@@ -249,17 +283,18 @@ export default function ShiftSettings() {
           <Divider />
 
           {error   && <Alert type="error"   text={error} />}
+          {validationError && !error && <Alert type="error" text={validationError} />}
           {success && <Alert type="success" text={success} />}
 
           <button
             type="submit"
-            disabled={saving}
+            disabled={saving || !savedForm || Boolean(validationError)}
             style={{
               display:'flex', alignItems:'center', justifyContent:'center', gap:8,
               width:'100%', padding:'11px 0', borderRadius:12,
               background:'#2567eb', color:'#fff', fontWeight:700, fontSize:14,
               border:'none', cursor: saving ? 'default' : 'pointer',
-              opacity: saving ? 0.7 : 1, transition:'opacity 0.15s',
+              opacity: saving || !savedForm || validationError ? 0.7 : 1, transition:'opacity 0.15s',
             }}
           >
             {saving
@@ -276,6 +311,11 @@ export default function ShiftSettings() {
           display:'flex', alignItems:'center', gap:8 }}>
           <Info size={15} style={{ color:'#6093fa' }} /> Live Preview
         </h3>
+        <p style={{ ...hint, color: hasUnsavedChanges ? '#fbbf24' : '#64748b' }}>
+          {hasUnsavedChanges
+            ? 'Preview includes unsaved changes. Kiosk and reports continue using the saved settings until you save.'
+            : 'Preview matches the saved shift settings.'}
+        </p>
 
         <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
           <PreviewRow color="#22c55e" label="Present"

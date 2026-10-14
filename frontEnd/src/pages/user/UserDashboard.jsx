@@ -69,9 +69,9 @@ export default function UserDashboard() {
       {/* ══════════════════════════════════════════════════════
           WELCOME BANNER
       ══════════════════════════════════════════════════════ */}
-      <div style={{
+      <div className="employee-welcome-banner" style={{
         position: 'relative', overflow: 'hidden',
-        background: 'linear-gradient(135deg, #0f2f70 0%, #0f182a 100%)',
+        background: 'linear-gradient(115deg, #082B59, #174EA6 58%, #2563EB)',
         border: '1px solid rgba(37, 103, 235,0.3)',
         borderRadius: '16px', padding: '28px 32px',
       }}>
@@ -79,24 +79,24 @@ export default function UserDashboard() {
         <div style={{
           position: 'absolute', top: '-40px', right: '-40px',
           width: '180px', height: '180px', borderRadius: '50%',
-          background: 'rgba(37, 103, 235,0.08)', pointerEvents: 'none',
+          background: 'rgba(255, 255, 255,0.08)', pointerEvents: 'none',
         }} />
         <div>
-          <p style={{ fontSize: '0.875rem', color: '#6093fa', fontWeight: 500, margin: '0 0 6px' }}>
+          <p style={{ fontSize: '0.875rem', color: '#c7dcff', fontWeight: 600, margin: '0 0 6px' }}>
             Welcome back
           </p>
-          <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#f1f4f9', margin: '0 0 4px', letterSpacing: '-0.03em' }}>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#ffffff', margin: '0 0 4px', letterSpacing: '-0.03em' }}>
             {user.fullName}
           </h1>
-          <p style={{ fontSize: '0.875rem', color: '#94a0b8', margin: 0 }}>
+          <p style={{ fontSize: '0.875rem', color: '#e0eaff', margin: 0 }}>
             {user.position} · {user.department}
           </p>
         </div>
         <div style={{ position: 'absolute', top: '24px', right: '28px', textAlign: 'right' }}>
-          <p style={{ fontSize: '0.6875rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 4px' }}>
+          <p style={{ fontSize: '0.6875rem', color: '#d5e4ff', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 4px' }}>
             Employee ID
           </p>
-          <p style={{ fontSize: '1.125rem', fontWeight: 700, fontFamily: 'monospace', color: '#6093fa', margin: 0 }}>
+          <p style={{ fontSize: '1.125rem', fontWeight: 700, fontFamily: 'monospace', color: '#ffffff', margin: 0 }}>
             {user.employeeId}
           </p>
         </div>

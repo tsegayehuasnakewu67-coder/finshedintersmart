@@ -74,63 +74,26 @@ const INF = (msg) => console.log('     ' + msg);
     });
   }
 
-  // ── 4. Signup ───────────────────────────────────
-  console.log('\n[4] Signup API Test');
-  const ts    = Date.now();
-  const email = `check${ts}@test.com`;
-  const empId = `CHK${ts}`;
+  // ── 4. Public signup must remain disabled ───────
+  console.log('\n[4] Public Signup API Test');
   const sr    = await req('POST', '/api/auth/signup', {
-    fullName: 'Check User', employeeId: empId, email,
-    password: 'Check1234', confirmPassword: 'Check1234',
-    department: 'General', position: 'Tester',
+    fullName: 'Check User',
   });
-  if (sr.status === 201) {
-    OK(sr.body.message);
-    INF('_id      : ' + sr.body.data.user._id);
-    INF('isActive : ' + sr.body.data.user.isActive);
-  } else {
-    ERR('Signup failed (' + sr.status + '): ' + JSON.stringify(sr.body));
-  }
+  if (sr.status === 403) OK('Public signup is disabled as expected.');
+  else ERR(`Expected public signup to be rejected (403); received ${sr.status}.`);
 
-  // ── 5. Login ────────────────────────────────────
-  console.log('\n[5] Login API Test');
-  const lr = await req('POST', '/api/auth/login', { email, password: 'Check1234' });
-  let token = '';
-  if (lr.status === 200) {
-    OK(lr.body.message);
-    INF('Role  : ' + lr.body.data.user.role);
-    token = lr.body.data.token;
-    INF('Token : ' + token.substring(0, 40) + '...');
-  } else {
-    ERR('Login failed (' + lr.status + '): ' + JSON.stringify(lr.body));
-  }
+  // ── 5. Login remains available to provisioned users.
+  console.log('\n[5] Login API');
+  INF('Login test requires an existing account; no account was created by this diagnostic.');
 
-  // ── 6. /auth/me ─────────────────────────────────
-  console.log('\n[6] GET /api/auth/me');
-  if (token) {
-    const me = await new Promise((resolve, reject) => {
-      const opts = { hostname: 'localhost', port: 5000, path: '/api/auth/me',
-        headers: { Authorization: 'Bearer ' + token } };
-      http.get(opts, res => {
-        let d = '';
-        res.on('data', c => d += c);
-        res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(d) }));
-      }).on('error', reject);
-    });
-    if (me.status === 200) OK('Returned user: ' + me.body.data.user.fullName);
-    else ERR('Failed: ' + JSON.stringify(me.body));
-  } else {
-    ERR('Skipped — no token from login');
-  }
-
-  // ── 7. Attendance mark route ─────────────────────
-  console.log('\n[7] Attendance Route Reachable');
+  // ── 6. Attendance mark route ─────────────────────
+  console.log('\n[6] Attendance Route Reachable');
   const ar = await req('POST', '/api/attendance/mark', { faceDescriptor: [] });
   if (ar.status === 400) OK('/api/attendance/mark reachable (400=invalid descriptor, expected)');
   else INF('Status: ' + ar.status + ' — ' + JSON.stringify(ar.body));
 
-  // ── 8. Frontend files ────────────────────────────
-  console.log('\n[8] Frontend Key Files');
+  // ── 7. Frontend files ────────────────────────────
+  console.log('\n[7] Frontend Key Files');
   const frontBase = path.join(__dirname, '../frontEnd/src');
   const required  = [
     'pages/Login.jsx', 'pages/Signup.jsx', 'pages/MarkAttendance.jsx',
@@ -148,8 +111,8 @@ const INF = (msg) => console.log('     ' + msg);
     }
   });
 
-  // ── 9. Model files ───────────────────────────────
-  console.log('\n[9] Face-API Model Files (/public/models)');
+  // ── 8. Model files ───────────────────────────────
+  console.log('\n[8] Face-API Model Files (/public/models)');
   const modelsDir = path.join(__dirname, '../frontEnd/public/models');
   const needed    = [
     'tiny_face_detector_model-weights_manifest.json',

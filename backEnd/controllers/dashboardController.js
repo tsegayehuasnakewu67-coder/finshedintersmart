@@ -1,10 +1,18 @@
 const User = require('../models/User');
 const Attendance = require('../models/Attendance');
-const { getAddisAbabaDateString } = require('../utils/ethiopianTime');
+const ShiftSettings = require('../models/ShiftSettings');
+const { getAttendanceDate } = require('../utils/shiftTime');
 
 const getStats = async (_req, res) => {
   try {
-    const today = getAddisAbabaDateString();
+    const now = new Date();
+    const shift = await ShiftSettings.findOne({ _key: 'default' }) || {
+      startHour: 8,
+      startMinute: 30,
+      endHour: 17,
+      endMinute: 0,
+    };
+    const today = getAttendanceDate(now, shift);
     
     const [
       totalEmployees,

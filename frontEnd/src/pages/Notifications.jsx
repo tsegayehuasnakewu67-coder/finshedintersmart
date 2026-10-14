@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Bell, Send, AlertTriangle, MessageSquare, Check, Users } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { notificationService } from '../services/notificationService';
 import { userService } from '../services/userService';
@@ -90,37 +91,61 @@ function AdminNotifications() {
 }
 
 function EmployeeNotifications() {
+  const navigate = useNavigate();
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const load = () => notificationService.list().then(setNotifications).catch(err => setError(err.message)).finally(() => setLoading(false));
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const interval = window.setInterval(load, 30000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   const markRead = async notification => {
-    if (notification.readAt) return;
     try {
-      const updated = await notificationService.markRead(notification._id);
-      setNotifications(previous => previous.map(item => item._id === updated._id ? updated : item));
+      if (!notification.readAt) {
+        const updated = await notificationService.markRead(notification._id);
+        setNotifications(previous => previous.map(item => item._id === updated._id ? updated : item));
+        window.dispatchEvent(new Event('sat:notifications-updated'));
+      }
+      if (notification.type === 'contact_reply' && notification.relatedMessageId) {
+        navigate(`/me/messages?ticket=${encodeURIComponent(notification.relatedMessageId)}`);
+      }
     } catch (err) { setError(err.message); }
   };
 
   return (
     <div style={pageStyle}>
       <header>
-        <h1 style={{ margin: 0, color: '#f8f9fc', fontSize: '1.5rem', fontWeight: 800 }}>My Notifications</h1>
+        <h1 style={{ margin: 0, color: '#0F172A', fontSize: '1.5rem', fontWeight: 800 }}>My Notifications</h1>
         <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: '0.875rem' }}>Attendance warnings and messages from the administrator.</p>
       </header>
       {error && <Notice tone="error">{error}</Notice>}
       {loading ? <Spinner /> : notifications.length === 0 ? <div style={cardStyle}><p style={{ margin: 0, color: '#64748b' }}>No messages yet.</p></div> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {notifications.map(notification => (
-            <button key={notification._id} onClick={() => markRead(notification)} style={{ ...cardStyle, width: '100%', textAlign: 'left', cursor: notification.readAt ? 'default' : 'pointer', borderColor: notification.readAt ? '#1e283b' : notification.type === 'warning' ? 'rgba(245,158,11,0.55)' : 'rgba(59, 121, 246,0.55)', opacity: notification.readAt ? 0.78 : 1 }}>
+            <button
+              key={notification._id}
+              onClick={() => markRead(notification)}
+              style={{
+                background: '#FFFFFF',
+                border: `1px solid ${notification.readAt ? '#E2E8F0' : notification.type === 'warning' ? '#FDE68A' : '#BFDBFE'}`,
+                borderRadius: '16px',
+                padding: '24px',
+                width: '100%',
+                color: '#0F172A',
+                textAlign: 'left',
+                cursor: notification.readAt ? 'default' : 'pointer',
+                boxShadow: '0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 24px rgba(15, 23, 42, 0.08)',
+              }}
+            >
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
-                <div style={{ color: notification.type === 'warning' ? '#fbbf24' : '#6093fa' }}>{notification.type === 'warning' ? <AlertTriangle size={20} /> : <Bell size={20} />}</div>
+                <div style={{ color: notification.type === 'warning' ? '#B45309' : '#1E3A8A' }}>{notification.type === 'warning' ? <AlertTriangle size={20} /> : <Bell size={20} />}</div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}><h2 style={{ margin: 0, color: '#f1f4f9', fontSize: '0.95rem' }}>{notification.subject}</h2>{!notification.readAt && <span style={{ color: '#6093fa', fontSize: '0.7rem', fontWeight: 700 }}>NEW</span>}</div>
-                  <p style={{ margin: '8px 0', color: '#cbd2e1', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{notification.message}</p>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}><h2 style={{ margin: 0, color: '#0F172A', fontSize: '0.95rem' }}>{notification.subject}</h2>{!notification.readAt && <span style={{ color: '#1D4ED8', fontSize: '0.7rem', fontWeight: 700 }}>NEW</span>}</div>
+                  <p style={{ margin: '8px 0', color: '#334155', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{notification.message}</p>
                   <small style={{ color: '#64748b' }}>{formatEthiopianDateTime(notification.createdAt)}</small>
                 </div>
               </div>

@@ -1,16 +1,50 @@
 const rateLimit = require('express-rate-limit');
+const jwt = require('jsonwebtoken');
+const { ipKeyGenerator } = require('express-rate-limit');
 const FaceScanAttempt = require('../models/FaceScanAttempt');
+
+const getApiRateLimitKey = (req) => {
+  const authorization = req.headers?.authorization || '';
+  const match = /^Bearer\s+(\S+)$/i.exec(authorization);
+  if (match && process.env.JWT_SECRET) {
+    try {
+      const claims = jwt.verify(match[1], process.env.JWT_SECRET);
+      if (claims.id) return `user:${claims.id}`;
+    } catch (error) {
+      if (!['JsonWebTokenError', 'TokenExpiredError', 'NotBeforeError'].includes(error.name)) {
+        throw error;
+      }
+    }
+  }
+  return `ip:${ipKeyGenerator(req.ip || req.socket?.remoteAddress || '127.0.0.1')}`;
+};
+
+const shouldSkipGlobalApiLimit = (req) => (
+  req.path === '/face/bulk-register'
+  || req.path === '/admin/messages'
+  || req.path.startsWith('/admin/messages/')
+  || (req.method === 'POST' && req.path === '/auth/login')
+);
 
 const apiRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: Number.parseInt(process.env.API_RATE_LIMIT_MAX, 10) || 100,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.path === '/face/bulk-register',
+  skip: shouldSkipGlobalApiLimit,
+  keyGenerator: getApiRateLimitKey,
   message: {
     success: false,
     error: { code: 'RATE_LIMITED', message: 'Too many requests. Please try again later.' },
     message: 'Too many requests. Please try again later.',
+  },
+  handler: (req, res, options) => {
+    console.warn('Global API rate limit exceeded.', {
+      method: req.method,
+      path: req.path,
+      authenticated: /^Bearer\s+\S+$/i.test(req.headers?.authorization || ''),
+    });
+    return res.status(options.statusCode).json(options.message);
   },
 });
 
@@ -23,6 +57,51 @@ const loginRateLimit = rateLimit({
     success: false,
     error: { code: 'LOGIN_RATE_LIMITED', message: 'Too many sign-in attempts. Please try again later.' },
     message: 'Too many sign-in attempts. Please try again later.',
+  },
+});
+
+const passwordResetRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: Number.parseInt(process.env.PASSWORD_RESET_RATE_LIMIT_MAX, 10) || 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many password reset requests. Please wait before trying again.',
+  },
+});
+
+const passwordResetVerifyRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: Number.parseInt(process.env.PASSWORD_RESET_VERIFY_RATE_LIMIT_MAX, 10) || 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many verification attempts. Please wait before trying again.',
+  },
+});
+
+const contactRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: Number.parseInt(process.env.CONTACT_RATE_LIMIT_MAX, 10) || 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many messages were submitted. Please try again later.',
+  },
+});
+
+const adminMessagesRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: Number.parseInt(process.env.ADMIN_MESSAGES_RATE_LIMIT_MAX, 10) || 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: { code: 'ADMIN_MESSAGES_RATE_LIMITED', message: 'Too many contact inbox requests. Please wait before trying again.' },
+    message: 'Too many contact inbox requests. Please wait before trying again.',
   },
 });
 
@@ -74,5 +153,7 @@ const corsOptions = () => {
 };
 
 module.exports = {
-  apiRateLimit, loginRateLimit, attendanceScanRateLimit, bulkFaceRateLimit, corsOptions,
+  apiRateLimit, loginRateLimit, passwordResetRateLimit, passwordResetVerifyRateLimit,
+  contactRateLimit, adminMessagesRateLimit, attendanceScanRateLimit, bulkFaceRateLimit, corsOptions,
+  shouldSkipGlobalApiLimit, getApiRateLimitKey,
 };

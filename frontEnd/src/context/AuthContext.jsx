@@ -1,11 +1,11 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import api from '../services/api';
+import api, { clearStoredToken, getStoredToken, setStoredToken } from '../services/api';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user,    setUser]    = useState(null);
-  const [token,   setToken]   = useState(() => localStorage.getItem('sat_token'));
+  const [token,   setToken]   = useState(getStoredToken);
   const [loading, setLoading] = useState(true);
 
   /* Validate stored token on mount */
@@ -13,12 +13,13 @@ export function AuthProvider({ children }) {
     if (!token) { setLoading(false); return; }
     api.get('/auth/me', { headers: { Authorization: `Bearer ${token}` } })
       .then(r => setUser(r.data.data.user))
-      .catch(() => { localStorage.removeItem('sat_token'); setToken(null); })
+      .catch(() => { clearStoredToken(); setToken(null); })
       .finally(() => setLoading(false));
   }, [token]);
 
   useEffect(() => {
     const handleUnauthorized = () => {
+      clearStoredToken();
       setUser(null);
       setToken(null);
       setLoading(false);
@@ -28,10 +29,10 @@ export function AuthProvider({ children }) {
     return () => window.removeEventListener('sat:unauthorized', handleUnauthorized);
   }, []);
 
-  const login = useCallback(async (identifier, password) => {
+  const login = useCallback(async (identifier, password, remember = true) => {
     const r = await api.post('/auth/login', { identifier, password });
     const { user: u, token: t } = r.data.data;
-    localStorage.setItem('sat_token', t);
+    setStoredToken(t, remember);
     setToken(t);
     setUser(u);
     return u;
@@ -40,14 +41,14 @@ export function AuthProvider({ children }) {
   const changePassword = useCallback(async (payload) => {
     const r = await api.post('/auth/change-password', payload);
     const { user: updatedUser, token: updatedToken } = r.data.data;
-    localStorage.setItem('sat_token', updatedToken);
+    setStoredToken(updatedToken, localStorage.getItem('sat_token') !== null);
     setToken(updatedToken);
     setUser(updatedUser);
     return updatedUser;
   }, []);
 
   const logout = useCallback(() => {
-    localStorage.removeItem('sat_token');
+    clearStoredToken();
     setToken(null);
     setUser(null);
   }, []);

@@ -11,7 +11,7 @@
  *  • All inputs: zero placeholder attributes
  */
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { userService } from '../../services/userService';
 import Spinner from '../../components/Spinner';
 import { Search, UserPlus, Upload, Camera, Trash2, Pencil, KeyRound, ChevronLeft, ChevronRight, X } from 'lucide-react';
@@ -20,21 +20,24 @@ import BulkFaceRegistration from '../../components/BulkFaceRegistration';
 
 /* ─── critical card style reused in 2 places ─────────────────────────────── */
 const CARD = {
-  background:   '#0f182a',
-  border:       '1px solid #1e283b',
+  background:   '#FFFFFF',
+  border:       '1px solid #E2E8F0',
   borderRadius: '16px',
   overflow:     'hidden',
+  boxShadow:    '0 6px 18px rgba(15, 23, 42, 0.04)',
 };
 
 export default function ManageUsers({ readOnly = false }) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedSearch = searchParams.get('search') || '';
   const [users,      setUsers]      = useState([]);
   const [pagination, setPagination] = useState({ total: 0, page: 1, totalPages: 1 });
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState('');
   const [notice,     setNotice]     = useState('');
   const [resettingId, setResettingId] = useState(null);
-  const [search,     setSearch]     = useState('');
+  const [search,     setSearch]     = useState(requestedSearch);
   const [dept,       setDept]       = useState('');
   const [depts,      setDepts]      = useState([]);
   const [deleteId,   setDeleteId]   = useState(null);
@@ -43,6 +46,8 @@ export default function ManageUsers({ readOnly = false }) {
   const [unlinkedTotal, setUnlinkedTotal] = useState(0);
   const [importOpen, setImportOpen] = useState(false);
   const [faceImportOpen, setFaceImportOpen] = useState(false);
+
+  useEffect(() => { setSearch(requestedSearch); }, [requestedSearch]);
 
   const fetchUsers = useCallback(async (page = 1) => {
     setLoading(true); setError('');
@@ -109,11 +114,11 @@ export default function ManageUsers({ readOnly = false }) {
       ═══════════════════════════════════════════════════════ */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
         <div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#f1f4f9', letterSpacing: '-0.025em', margin: 0 }}>
-            {readOnly ? 'Employee Directory' : 'Employees'}
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#0F172A', letterSpacing: '-0.025em', margin: 0 }}>
+            {readOnly ? 'Employee Directory' : 'User Management'}
           </h1>
-          <p style={{ fontSize: '0.875rem', color: '#64748b', marginTop: '4px' }}>
-            {pagination.total} total employees
+          <p style={{ fontSize: '0.875rem', color: '#475569', marginTop: '4px' }}>
+            {pagination.total} total {readOnly ? 'employees' : 'accounts'}
           </p>
         </div>
 
@@ -135,12 +140,20 @@ export default function ManageUsers({ readOnly = false }) {
               <UserPlus size={15} />
               Register Employee
             </button>
+            <button
+              className="employee-management-register"
+              onClick={() => navigate('/admin/register-hr')}
+              type="button"
+            >
+              <UserPlus size={15} />
+              Register HR Account
+            </button>
           </div>
         )}
       </div>
 
       {notice && (
-        <div role="status" style={{ padding: '12px 16px', borderRadius: '10px', background: 'rgba(6, 78, 59, 0.35)', border: '1px solid #047857', color: '#a7f3d0', fontSize: '0.875rem' }}>
+        <div role="status" style={{ padding: '12px 16px', borderRadius: '10px', background: '#ECFDF5', border: '1px solid #86EFAC', color: '#166534', fontSize: '0.875rem' }}>
           {notice}
         </div>
       )}
@@ -165,8 +178,8 @@ export default function ManageUsers({ readOnly = false }) {
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 style={{ ...INPUT_STYLE, paddingLeft: '36px' }}
-                onFocus={e => { e.target.style.borderColor = '#3b79f6'; e.target.style.boxShadow = '0 0 0 3px rgba(59, 121, 246,0.15)'; }}
-                onBlur={e  => { e.target.style.borderColor = '#333e55'; e.target.style.boxShadow = 'none'; }}
+                onFocus={e => { e.target.style.borderColor = '#3B82F6'; e.target.style.boxShadow = '0 0 0 3px rgba(59, 130, 246,0.18)'; }}
+                onBlur={e  => { e.target.style.borderColor = '#CBD5E1'; e.target.style.boxShadow = 'none'; }}
               />
             </div>
           </div>
@@ -178,8 +191,8 @@ export default function ManageUsers({ readOnly = false }) {
               value={dept}
               onChange={e => setDept(e.target.value)}
               style={INPUT_STYLE}
-              onFocus={e => { e.target.style.borderColor = '#3b79f6'; e.target.style.boxShadow = '0 0 0 3px rgba(59, 121, 246,0.15)'; }}
-              onBlur={e  => { e.target.style.borderColor = '#333e55'; e.target.style.boxShadow = 'none'; }}
+              onFocus={e => { e.target.style.borderColor = '#3B82F6'; e.target.style.boxShadow = '0 0 0 3px rgba(59, 130, 246,0.18)'; }}
+              onBlur={e  => { e.target.style.borderColor = '#CBD5E1'; e.target.style.boxShadow = 'none'; }}
             >
               <option value="">All Departments</option>
               {depts.map(d => <option key={d} value={d}>{d}</option>)}
@@ -190,7 +203,7 @@ export default function ManageUsers({ readOnly = false }) {
 
       {/* Error */}
       {error && (
-        <div style={{ padding: '12px 16px', borderRadius: '10px', background: 'rgba(29, 62, 127,0.3)', border: '1px solid #991b1b', color: '#fca5a5', fontSize: '0.875rem' }}>
+        <div style={{ padding: '12px 16px', borderRadius: '10px', background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#B91C1C', fontSize: '0.875rem' }}>
           {error}
         </div>
       )}
@@ -209,7 +222,7 @@ export default function ManageUsers({ readOnly = false }) {
 
               {/* ── Table head ── */}
               <thead>
-                <tr style={{ background: 'rgba(28, 39, 61,0.8)', borderBottom: '1px solid #1e283b' }}>
+                <tr style={{ background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
                   {(readOnly ? COLUMNS.slice(0, -1) : COLUMNS).map(col => (
                     <th
                       key={col.label}
@@ -218,7 +231,7 @@ export default function ManageUsers({ readOnly = false }) {
                         padding: '14px 20px',
                         fontSize: '0.6875rem',
                         fontWeight: 700,
-                        color: '#94a0b8',
+                        color: '#475569',
                         textTransform: 'uppercase',
                         letterSpacing: '0.08em',
                         whiteSpace: 'nowrap',
@@ -237,9 +250,9 @@ export default function ManageUsers({ readOnly = false }) {
                   <tr>
                     <td
                       colSpan={readOnly ? COLUMNS.length - 1 : COLUMNS.length}
-                      style={{ padding: '64px 20px', textAlign: 'center', color: '#64748b', fontSize: '0.875rem' }}
+                      style={{ padding: '64px 20px', textAlign: 'center', color: '#475569', fontSize: '0.875rem' }}
                     >
-                      No employees found.
+                      No {readOnly ? 'employees' : 'users'} found.
                     </td>
                   </tr>
                 )}
@@ -265,10 +278,10 @@ export default function ManageUsers({ readOnly = false }) {
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               padding: '12px 20px',
-              borderTop: '1px solid #1e283b',
-              background: '#0f182a',
+              borderTop: '1px solid #E2E8F0',
+              background: '#F8FAFC',
             }}>
-              <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+              <span style={{ fontSize: '0.75rem', color: '#475569' }}>
                 Page {pagination.page} of {pagination.totalPages}
                 &nbsp;·&nbsp;
                 {pagination.total} employees
@@ -370,41 +383,41 @@ export default function ManageUsers({ readOnly = false }) {
       ═══════════════════════════════════════════════════════ */}
       {deleteId && (
         <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0, 0, 0,0.75)',
+          position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
           backdropFilter: 'blur(4px)', display: 'flex',
           alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px',
         }}>
           <div style={{
-            background: '#0f182a', border: '1px solid #333e55',
+            background: '#FFFFFF', border: '1px solid #E2E8F0',
             borderRadius: '20px', padding: '28px', width: '100%', maxWidth: '380px',
-            boxShadow: '0 25px 60px rgba(0,0,0,0.5)',
+            boxShadow: '0 25px 60px rgba(15, 23, 42, 0.12)',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-              <h3 style={{ fontWeight: 700, color: '#f1f4f9', fontSize: '1rem', margin: 0 }}>
+              <h3 style={{ fontWeight: 700, color: '#0F172A', fontSize: '1rem', margin: 0 }}>
                 Delete Employee
               </h3>
               <button
                 onClick={() => setDeleteId(null)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', padding: '4px', borderRadius: '6px' }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B', padding: '4px', borderRadius: '6px' }}
               >
                 <X size={16} />
               </button>
             </div>
-            <p style={{ fontSize: '0.875rem', color: '#94a0b8', lineHeight: 1.6, marginBottom: '24px' }}>
+            <p style={{ fontSize: '0.875rem', color: '#475569', lineHeight: 1.6, marginBottom: '24px' }}>
               This permanently removes the employee and all their attendance records.{' '}
-              <span style={{ color: '#f87171', fontWeight: 500 }}>This cannot be undone.</span>
+              <span style={{ color: '#DC2626', fontWeight: 500 }}>This cannot be undone.</span>
             </p>
             <div style={{ display: 'flex', gap: '12px' }}>
               <button
                 onClick={() => setDeleteId(null)}
-                style={{ flex: 1, padding: '10px', borderRadius: '12px', background: '#1c273d', border: '1px solid #333e55', color: '#cbd2e1', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer' }}
+                style={{ flex: 1, padding: '10px', borderRadius: '12px', background: '#F8FAFC', border: '1px solid #E2E8F0', color: '#0F172A', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer' }}
               >
                 Cancel
               </button>
               <button
                 onClick={confirmDelete}
                 disabled={deleting}
-                style={{ flex: 1, padding: '10px', borderRadius: '12px', background: deleting ? '#1d3e7f' : '#1c50b9', border: 'none', color: '#fff', fontWeight: 600, fontSize: '0.875rem', cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.7 : 1 }}
+                style={{ flex: 1, padding: '10px', borderRadius: '12px', background: deleting ? '#1D4ED8' : '#2563EB', border: 'none', color: '#fff', fontWeight: 600, fontSize: '0.875rem', cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.7 : 1 }}
               >
                 {deleting ? 'Deleting…' : 'Delete'}
               </button>
@@ -431,14 +444,14 @@ const COLUMNS = [
 /* ── Shared style objects ────────────────────────────────────────────────── */
 const LABEL_STYLE = {
   fontSize: '0.6875rem', fontWeight: 700,
-  color: '#64748b', textTransform: 'uppercase',
+  color: '#475569', textTransform: 'uppercase',
   letterSpacing: '0.07em',
 };
 
 const INPUT_STYLE = {
   width: '100%', padding: '10px 14px',
-  background: '#1c273d', border: '1.5px solid #333e55',
-  borderRadius: '10px', color: '#e2e7f0',
+  background: '#FFFFFF', border: '1.5px solid #CBD5E1',
+  borderRadius: '10px', color: '#0F172A',
   fontSize: '0.875rem', outline: 'none',
   transition: 'border-color 0.15s, box-shadow 0.15s',
   boxSizing: 'border-box',
@@ -453,8 +466,8 @@ function TableRow({ u, isLast, onEdit, onDelete, onResetPassword, readOnly, rese
   const cellStyle = {
     padding: '16px 20px',
     fontSize: '0.875rem',
-    borderBottom: isLast ? 'none' : '1px solid #1e283b',
-    background: hovered ? 'rgba(28, 39, 61,0.5)' : 'transparent',
+    borderBottom: isLast ? 'none' : '1px solid #E2E8F0',
+    background: hovered ? '#F8FAFC' : 'transparent',
     transition: 'background 0.1s',
   };
 
@@ -466,31 +479,31 @@ function TableRow({ u, isLast, onEdit, onDelete, onResetPassword, readOnly, rese
       {/* Employee ID */}
       <td style={cellStyle}>
         <code style={{
-          fontSize: '0.75rem', background: '#1c273d',
-          border: '1px solid #333e55', padding: '3px 8px',
-          borderRadius: '6px', color: '#94a0b8', fontFamily: 'monospace',
+          fontSize: '0.75rem', background: '#F8FAFC',
+          border: '1px solid #CBD5E1', padding: '3px 8px',
+          borderRadius: '6px', color: '#475569', fontFamily: 'monospace',
         }}>
           {u.employeeId}
         </code>
       </td>
 
       {/* Name */}
-      <td style={{ ...cellStyle, fontWeight: 600, color: '#f1f4f9', whiteSpace: 'nowrap' }}>
+      <td style={{ ...cellStyle, fontWeight: 600, color: '#0F172A', whiteSpace: 'nowrap' }}>
         {u.fullName}
       </td>
 
       {/* Email */}
-      <td style={{ ...cellStyle, color: '#94a0b8', maxWidth: '210px' }}>
+      <td style={{ ...cellStyle, color: '#475569', maxWidth: '210px' }}>
         <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={u.email}>
           {u.email}
         </span>
       </td>
 
       {/* Department */}
-      <td style={{ ...cellStyle, color: '#cbd2e1' }}>{u.department}</td>
+      <td style={{ ...cellStyle, color: '#334155' }}>{u.department}</td>
 
       {/* Position */}
-      <td style={{ ...cellStyle, color: '#94a0b8' }}>
+      <td style={{ ...cellStyle, color: '#475569' }}>
         <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px' }} title={u.position}>
           {u.position}
         </span>
@@ -503,7 +516,7 @@ function TableRow({ u, isLast, onEdit, onDelete, onResetPassword, readOnly, rese
       <td style={cellStyle}>
         <StatusDot active={u.isActive} />
         {u.role === 'employee' && (
-          <span style={{ display: 'block', marginTop: '5px', fontSize: '0.6875rem', color: u.mustChangePassword ? '#fbbf24' : '#94a0b8' }}>
+          <span style={{ display: 'block', marginTop: '5px', fontSize: '0.6875rem', color: u.mustChangePassword ? '#D97706' : '#475569' }}>
             {u.mustChangePassword ? 'Needs password change' : 'Password set'}
           </span>
         )}
@@ -535,9 +548,9 @@ function ActionBtn({ onClick, title, hoverColor, color, children, disabled = fal
       onMouseLeave={() => setHovered(false)}
       style={{
         padding: '7px', borderRadius: '8px',
-        background: hovered ? hoverColor : '#1c273d',
-        border: '1px solid #333e55',
-        color: hovered ? color : '#64748b',
+        background: hovered ? hoverColor : '#F8FAFC',
+        border: '1px solid #E2E8F0',
+        color: hovered ? color : '#475569',
         cursor: disabled ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center',
         opacity: disabled ? 0.55 : 1,
         transition: 'background 0.15s, color 0.15s',
@@ -550,24 +563,25 @@ function ActionBtn({ onClick, title, hoverColor, color, children, disabled = fal
 
 function RoleBadge({ role }) {
   const isAdmin = role === 'admin';
+  const isHr = role === 'hr';
   return (
     <span style={{
       display: 'inline-block',
       fontSize: '0.6875rem', fontWeight: 700,
       padding: '2px 10px', borderRadius: '999px',
-      background: isAdmin ? 'rgba(28, 64, 135,0.4)' : 'rgba(29, 91, 216,0.3)',
-      color:      isAdmin ? '#b4cdfe' : '#93b6fd',
-      border:     isAdmin ? '1px solid rgba(28, 64, 135,0.6)' : '1px solid rgba(29, 91, 216,0.5)',
+      background: isAdmin ? '#DBEAFE' : isHr ? '#F3E8FF' : '#E0F2FE',
+      color: isAdmin ? '#1D4ED8' : isHr ? '#7E22CE' : '#0369A1',
+      border: `1px solid ${isHr ? '#D8B4FE' : '#BFDBFE'}`,
     }}>
-      {role}
+      {role.toUpperCase()}
     </span>
   );
 }
 
 function StatusDot({ active }) {
   return (
-    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8125rem', fontWeight: 500, whiteSpace: 'nowrap', color: active ? '#4ade80' : '#f87171' }}>
-      <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: active ? '#4a7bde' : '#719ef8', flexShrink: 0 }} />
+    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8125rem', fontWeight: 500, whiteSpace: 'nowrap', color: active ? '#166534' : '#B91C1C' }}>
+      <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: active ? '#16A34A' : '#DC2626', flexShrink: 0 }} />
       {active ? 'Active' : 'Inactive'}
     </span>
   );
@@ -580,8 +594,8 @@ function PaginationBtn({ disabled, onClick, children }) {
       onClick={onClick}
       style={{
         padding: '6px 8px', borderRadius: '8px',
-        background: '#1c273d', border: '1px solid #333e55',
-        color: '#94a0b8', cursor: disabled ? 'not-allowed' : 'pointer',
+        background: '#FFFFFF', border: '1px solid #E2E8F0',
+        color: '#475569', cursor: disabled ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.35 : 1, display: 'flex', alignItems: 'center',
         transition: 'background 0.15s',
       }}

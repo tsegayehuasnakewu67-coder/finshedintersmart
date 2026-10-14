@@ -57,7 +57,7 @@ export default function Employees() {
           <h2 style={styles.pageTitle}>Employees</h2>
           <p style={styles.pageSub}>{pagination.total} total employees</p>
         </div>
-        <button onClick={() => navigate('/admin/employees/new')} style={styles.addBtn}>
+        <button onClick={() => navigate('/admin/register')} style={styles.addBtn}>
           + Register Employee
         </button>
       </div>
@@ -112,7 +112,7 @@ export default function Employees() {
                     <td style={styles.td}>
                       <div style={styles.actions}>
                         <button
-                          onClick={() => navigate(`/admin/employees/new?edit=${emp._id}`)}
+                          onClick={() => navigate(`/admin/register?edit=${emp._id}`)}
                           style={styles.editBtn}
                         >
                           Edit

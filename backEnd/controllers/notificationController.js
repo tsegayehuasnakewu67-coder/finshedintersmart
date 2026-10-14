@@ -3,13 +3,26 @@ const User = require('../models/User');
 
 const listNotifications = async (req, res) => {
   try {
-    const notifications = await Notification.find({ recipient: req.user._id })
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 100));
+    const recipientQuery = {
+      $or: [{ recipient: req.user._id }, { recipientUserId: req.user._id }],
+    };
+    const [notifications, unreadCount] = await Promise.all([
+      Notification.find(recipientQuery)
       .populate('sender', 'fullName role')
       .sort({ createdAt: -1 })
-      .limit(100);
-    return res.json({ success: true, data: notifications });
+      .limit(limit),
+      Notification.countDocuments({
+        ...recipientQuery,
+        $and: [
+          { $or: [{ readAt: null }, { readAt: { $exists: false } }] },
+          ...(req.query.type ? [{ type: req.query.type }] : []),
+        ],
+      }),
+    ]);
+    return res.json({ success: true, data: { notifications, unreadCount } });
   } catch (err) {
-    console.error('List notifications error:', err);
+    console.error('List notifications error:', err.name);
     return res.status(500).json({ success: false, message: 'Unable to load notifications.' });
   }
 };
@@ -41,10 +54,14 @@ const sendNotification = async (req, res) => {
 
     const documents = recipients.map(recipient => ({
       recipient: recipient._id,
+      recipientUserId: recipient._id,
       sender: req.user._id,
       type,
+      title: subject.trim(),
       subject: subject.trim(),
       message: message.trim(),
+      isRead: false,
+      readAt: null,
     }));
     await Notification.insertMany(documents);
 
@@ -62,8 +79,11 @@ const sendNotification = async (req, res) => {
 const markNotificationRead = async (req, res) => {
   try {
     const notification = await Notification.findOneAndUpdate(
-      { _id: req.params.id, recipient: req.user._id },
-      { readAt: new Date() },
+      {
+        _id: req.params.id,
+        $or: [{ recipient: req.user._id }, { recipientUserId: req.user._id }],
+      },
+      { $set: { readAt: new Date(), isRead: true } },
       { new: true },
     );
     if (!notification) return res.status(404).json({ success: false, message: 'Notification not found.' });
@@ -73,4 +93,21 @@ const markNotificationRead = async (req, res) => {
   }
 };
 
-module.exports = { listNotifications, sendNotification, markNotificationRead };
+const getUnreadNotificationCount = async (req, res) => {
+  try {
+    const filter = {
+      $or: [{ recipient: req.user._id }, { recipientUserId: req.user._id }],
+      $and: [
+        { $or: [{ readAt: null }, { readAt: { $exists: false } }] },
+        ...(req.query.type ? [{ type: req.query.type }] : []),
+      ],
+    };
+    const count = await Notification.countDocuments(filter);
+    return res.json({ success: true, data: { count } });
+  } catch (error) {
+    console.error('Unread notification count failed:', error.name);
+    return res.status(500).json({ success: false, message: 'Unable to load the unread notification count.' });
+  }
+};
+
+module.exports = { listNotifications, sendNotification, markNotificationRead, getUnreadNotificationCount };

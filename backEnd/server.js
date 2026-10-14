@@ -1,14 +1,14 @@
-const express = require('express');
-const cors    = require('cors');
 const dotenv  = require('dotenv');
 const path    = require('path');
+dotenv.config({ path: path.join(__dirname, '.env') });
+
+const express = require('express');
+const cors    = require('cors');
 const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
 const connectDB = require('./config/db');
 const { apiRateLimit, corsOptions } = require('./middleware/apiSecurity');
 const { errorHandler, notFoundHandler } = require('./middleware/requestValidation');
-
-dotenv.config({ path: path.join(__dirname, '.env') });
 
 const startServer = async () => {
   await connectDB();
@@ -44,6 +44,10 @@ const startServer = async () => {
   }
 
   app.use('/api/auth',       require('./routes/authRoutes'));
+  app.use('/api/contact',    require('./routes/contactRoutes'));
+  app.use('/api/admin/messages', require('./routes/adminMessageRoutes'));
+  app.use('/api/admin/audit-logs', require('./routes/auditLogRoutes'));
+  app.use('/api/messages', require('./routes/messageRoutes'));
   app.use('/api/face',       require('./routes/faceRoutes'));
   app.use('/api/employees',  require('./routes/employeeRoutes'));
   app.use('/api/dashboard',  require('./routes/dashboardRoutes'));

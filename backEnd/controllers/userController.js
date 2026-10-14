@@ -4,6 +4,7 @@ const Employee   = require('../models/Employee');
 const { syncEmployeeForUser } = require('../utils/employeeSync');
 const { findDuplicateFace } = require('../utils/faceRegistration');
 const { invalidateFaceCandidates } = require('../services/faceRecognitionService');
+const { recordAuditEvent, auditWarning } = require('../utils/auditLog');
 
 // GET /api/users
 const getAllUsers = async (req, res) => {
@@ -125,6 +126,12 @@ const updateUser = async (req, res) => {
       if (!['admin', 'hr', 'employee'].includes(role)) {
         return res.status(400).json({ success: false, message: 'Invalid user role.' });
       }
+      if (role !== 'employee' && role !== user.role) {
+        return res.status(403).json({
+          success: false,
+          message: 'Privileged roles must be assigned through their dedicated Admin workflow.',
+        });
+      }
       user.role = role;
     }
     if (isActive !== undefined) {
@@ -183,7 +190,23 @@ const updateUser = async (req, res) => {
     if (req.body.isActive !== undefined || req.body.employeeId !== undefined || req.body.status !== undefined) {
       invalidateFaceCandidates();
     }
-    return res.json({ success: true, message: 'User updated.', data: { user: user.toJSON() } });
+    const auditRecorded = await recordAuditEvent(req, {
+      action: user.role !== previousRole ? 'USER_ROLE_CHANGED'
+        : user.isActive !== previousActiveState ? (user.isActive ? 'USER_REACTIVATED' : 'USER_DEACTIVATED')
+          : 'USER_UPDATED',
+      resourceType: 'user',
+      resourceId: user._id,
+      summary: `Updated account ${user.employeeId}.`,
+      details: {
+        employeeId: user.employeeId,
+        changedFields: Object.keys(req.body).filter(field => field !== 'password' && req.body[field] !== undefined),
+        previousRole,
+        role: user.role,
+        previousIsActive: previousActiveState,
+        isActive: user.isActive,
+      },
+    });
+    return res.json({ success: true, message: 'User updated.', data: { user: user.toJSON() }, ...auditWarning(auditRecorded) });
   } catch (err) {
     if (err.code === 11000) return res.status(409).json({ success: false, message: 'Email or employee ID is already in use.' });
     if (err.name === 'ValidationError' || err.name === 'CastError') {
@@ -205,7 +228,14 @@ const deleteUser = async (req, res) => {
     await Employee.deleteOne({ user: user._id });
     await User.findByIdAndDelete(req.params.id);
     invalidateFaceCandidates();
-    return res.json({ success: true, message: `"${user.fullName}" deleted.` });
+    const auditRecorded = await recordAuditEvent(req, {
+      action: 'USER_DELETED',
+      resourceType: 'user',
+      resourceId: user._id,
+      summary: `Deleted account ${user.employeeId}.`,
+      details: { employeeId: user.employeeId, role: user.role },
+    });
+    return res.json({ success: true, message: `"${user.fullName}" deleted.`, ...auditWarning(auditRecorded) });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
@@ -241,7 +271,14 @@ const updateFace = async (req, res) => {
       { runValidators: true },
     );
     invalidateFaceCandidates();
-    return res.json({ success: true, message: 'Face registered.', data: { user } });
+    const auditRecorded = await recordAuditEvent(req, {
+      action: 'FACE_TEMPLATE_UPDATED',
+      resourceType: 'user',
+      resourceId: user._id,
+      summary: `Updated face registration for ${user.employeeId}.`,
+      details: { employeeId: user.employeeId, faceTemplateChanged: true },
+    });
+    return res.json({ success: true, message: 'Face registered.', data: { user }, ...auditWarning(auditRecorded) });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }

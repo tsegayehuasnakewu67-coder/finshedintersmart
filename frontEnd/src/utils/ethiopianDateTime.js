@@ -13,6 +13,7 @@ export const formatEthiopianDate = (value, options = {}) => {
   if (!value) return '—';
   return new Intl.DateTimeFormat(DATE_LOCALE, {
     timeZone: ETHIOPIAN_TIME_ZONE,
+    calendar: 'ethiopic',
     year: 'numeric',
     month: 'long',
     day: 'numeric',

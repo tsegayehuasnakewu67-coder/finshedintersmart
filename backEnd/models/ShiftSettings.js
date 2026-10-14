@@ -23,7 +23,7 @@ const shiftSettingsSchema = new mongoose.Schema({
   lunchEnabled:      { type: Boolean, default: false },
   lunchStartHour:    { type: Number, default: 12, min: 0, max: 23 },
   lunchStartMinute:  { type: Number, default: 0,  min: 0, max: 59 },
-  lunchDuration:     { type: Number, default: 60, min: 0, max: 180 }, // minutes
+  lunchDuration:     { type: Number, default: 60, min: 1, max: 180 }, // minutes
 
   // Attendance windows and employee event notifications
   beforeLunchStartHour:   { type: Number, default: 8, min: 0, max: 23 },

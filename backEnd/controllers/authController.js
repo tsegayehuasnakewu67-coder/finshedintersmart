@@ -6,8 +6,16 @@ const User = require('../models/User');
 const { findDuplicateFace } = require('../utils/faceRegistration');
 const { syncEmployeeForUser } = require('../utils/employeeSync');
 const { invalidateFaceCandidates } = require('../services/faceRecognitionService');
-const { sendPasswordResetEmail, isPasswordResetEmailConfigured } = require('../services/emailService');
+const {
+  sendPasswordResetEmail,
+  sendPasswordResetCodeEmail,
+  isPasswordResetEmailConfigured,
+  getSmtpConfigurationStatus,
+  verifySmtpConnection,
+} = require('../services/emailService');
 const { getDefaultEmployeePassword, validatePassword } = require('../utils/passwordPolicy');
+const { departments: hrDepartments, positions: hrPositions } = require('../constants/hrAccountOptions');
+const { recordAuditEvent, auditWarning } = require('../utils/auditLog');
 
 const signToken = (user, passwordChangeOnly = false) =>
   jwt.sign({
@@ -36,11 +44,47 @@ const safeUser = (u) => ({
 });
 
 const hashResetToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
+const hashResetCode = (email, code) => crypto.createHmac('sha256', process.env.JWT_SECRET)
+  .update(`${email}:${code}`).digest('hex');
+
+const issuePasswordResetCode = async (user) => {
+  const code = String(crypto.randomInt(100000, 1000000));
+  const codeHash = hashResetCode(user.email, code);
+  user.passwordResetCodeHash = codeHash;
+  user.passwordResetCodeExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  user.passwordResetCodeAttempts = 0;
+  user.passwordResetCodeSentAt = new Date();
+  user.passwordResetGrantHash = null;
+  user.passwordResetGrantExpiresAt = null;
+  user.passwordResetTokenHash = null;
+  user.passwordResetExpiresAt = null;
+  await user.save();
+  try {
+    await sendPasswordResetCodeEmail({ email: user.email, name: user.fullName, code });
+  } catch (error) {
+    await User.updateOne(
+      { _id: user._id, passwordResetCodeHash: codeHash },
+      { $set: {
+        passwordResetCodeHash: null,
+        passwordResetCodeExpiresAt: null,
+        passwordResetCodeAttempts: 0,
+        passwordResetCodeSentAt: null,
+      } },
+    );
+    throw error;
+  }
+};
 
 const issuePasswordReset = async (user) => {
   const token = crypto.randomBytes(32).toString('hex');
   user.passwordResetTokenHash = hashResetToken(token);
   user.passwordResetExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  user.passwordResetCodeHash = null;
+  user.passwordResetCodeExpiresAt = null;
+  user.passwordResetCodeAttempts = 0;
+  user.passwordResetCodeSentAt = null;
+  user.passwordResetGrantHash = null;
+  user.passwordResetGrantExpiresAt = null;
   await user.save();
   try {
     await sendPasswordResetEmail({ email: user.email, name: user.fullName, token });
@@ -61,24 +105,27 @@ const issuePasswordReset = async (user) => {
 const register = async (req, res) => {
   try {
     const {
-      fullName, employeeId, email, password, confirmPassword,
+      fullName, employeeId, email, confirmPassword,
       department, position, role, faceDescriptor,
     } = req.body;
-    const accountRole = ['admin', 'hr'].includes(role) ? role : 'employee';
+    if (role !== undefined && role !== 'employee') {
+      return res.status(403).json({ success: false, message: 'This endpoint only registers employee accounts.' });
+    }
 
-    if (!fullName || !employeeId || !email || !department || !position
-      || (accountRole !== 'employee' && !password)) {
+    const normalizedName = typeof fullName === 'string' ? fullName.trim() : '';
+    const normalizedEmployeeId = typeof employeeId === 'string' ? employeeId.trim().toUpperCase() : '';
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const normalizedDepartment = typeof department === 'string' ? department.trim() : '';
+    const normalizedPosition = typeof position === 'string' ? position.trim() : '';
+    if (!normalizedName || normalizedName.length < 2 || normalizedName.length > 120
+      || !normalizedEmployeeId || normalizedEmployeeId.length > 64
+      || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || normalizedEmail.length > 254
+      || !normalizedDepartment || normalizedDepartment.length > 100
+      || normalizedPosition.length < 2 || normalizedPosition.length > 100) {
       return res.status(400).json({ success: false, message: 'All fields are required.' });
     }
-    if (typeof position !== 'string' || position.trim().length < 2) {
-      return res.status(400).json({ success: false, message: 'Position title must be at least 2 characters long.' });
-    }
-    if (accountRole !== 'employee' && confirmPassword !== undefined && password !== confirmPassword) {
-      return res.status(400).json({ success: false, message: 'Passwords do not match.' });
-    }
-    if (accountRole !== 'employee') {
-      const passwordError = validatePassword(password);
-      if (passwordError) return res.status(400).json({ success: false, message: passwordError });
+    if (confirmPassword !== undefined) {
+      return res.status(400).json({ success: false, message: 'Employee passwords are configured securely on the server.' });
     }
     if (faceDescriptor !== undefined && (
       !Array.isArray(faceDescriptor)
@@ -89,16 +136,16 @@ const register = async (req, res) => {
     }
 
     const exists = await User.findOne({
-      $or: [{ email: email.toLowerCase() }, { employeeId: employeeId.toUpperCase() }],
+      $or: [{ email: normalizedEmail }, { employeeId: normalizedEmployeeId }],
     });
     if (exists) {
-      const field = exists.email === email.toLowerCase() ? 'Email' : 'Employee ID';
+      const field = exists.email === normalizedEmail ? 'Email' : 'Employee ID';
       return res.status(409).json({ success: false, message: `${field} already registered.` });
     }
 
     // ── Face duplicate check ──────────────────────────────
     if (faceDescriptor && faceDescriptor.length === 128) {
-      const owner = await findDuplicateFace(faceDescriptor, { excludeEmployeeCode: employeeId });
+      const owner = await findDuplicateFace(faceDescriptor, { excludeEmployeeCode: normalizedEmployeeId });
       if (owner) {
         return res.status(409).json({
           success: false,
@@ -107,29 +154,35 @@ const register = async (req, res) => {
       }
     }
 
-    const employeePassword = accountRole === 'employee' ? getDefaultEmployeePassword() : password;
+    const employeePassword = getDefaultEmployeePassword();
     const user = await User.create({
-      name:           fullName.trim(),
-      fullName: fullName.trim(),
-      employeeId: employeeId.toUpperCase().trim(),
-      email: email.toLowerCase().trim(),
+      name: normalizedName,
+      fullName: normalizedName,
+      employeeId: normalizedEmployeeId,
+      email: normalizedEmail,
       password: employeePassword,
-      department: department.trim(),
-      position: position.trim(),
-      role: accountRole,
-      mustChangePassword: accountRole === 'employee',
-      passwordChangedAt: accountRole === 'employee' ? null : new Date(),
+      department: normalizedDepartment,
+      position: normalizedPosition,
+      role: 'employee',
+      mustChangePassword: true,
+      passwordChangedAt: null,
       faceDescriptor: faceDescriptor || [],
     });
     await syncEmployeeForUser(user);
     invalidateFaceCandidates();
+    const auditRecorded = await recordAuditEvent(req, {
+      action: 'USER_CREATED',
+      resourceType: 'user',
+      resourceId: user._id,
+      summary: `Registered employee account ${user.employeeId}.`,
+      details: { employeeId: user.employeeId, role: user.role },
+    });
 
     return res.status(201).json({
       success: true,
-      message: accountRole === 'employee'
-        ? `Employee "${user.fullName}" registered. They must change the configured default password after signing in.`
-        : `Employee "${user.fullName}" registered.`,
+      message: `Employee "${user.fullName}" registered. They must change the configured default password after signing in.`,
       data: { user: safeUser(user) },
+      ...auditWarning(auditRecorded),
     });
   } catch (err) {
     if (/DEFAULT_EMPLOYEE_PASSWORD/.test(err.message)) {
@@ -141,6 +194,74 @@ const register = async (req, res) => {
     }
     console.error('Register error:', err);
     return res.status(500).json({ success: false, message: 'Server error during registration.' });
+  }
+};
+
+// POST /api/auth/register-hr (Admin only; HR creation has its own dedicated workflow)
+const registerHr = async (req, res) => {
+  try {
+    const {
+      fullName, employeeId, email, password, confirmPassword, department, position,
+    } = req.body;
+    const normalizedName = typeof fullName === 'string' ? fullName.trim() : '';
+    const normalizedEmployeeId = typeof employeeId === 'string' ? employeeId.trim().toUpperCase() : '';
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const normalizedDepartment = typeof department === 'string' ? department.trim() : '';
+    const normalizedPosition = typeof position === 'string' ? position.trim() : '';
+    if (!normalizedName || normalizedName.length < 2 || normalizedName.length > 120
+      || !normalizedEmployeeId || normalizedEmployeeId.length > 64
+      || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || normalizedEmail.length > 254
+      || !hrDepartments.includes(normalizedDepartment)
+      || !hrPositions.includes(normalizedPosition)
+      || typeof password !== 'string' || typeof confirmPassword !== 'string') {
+      return res.status(400).json({ success: false, message: 'All HR account fields are required and must be valid.' });
+    }
+    if (password !== confirmPassword) {
+      return res.status(400).json({ success: false, message: 'Passwords do not match.' });
+    }
+    const passwordError = validatePassword(password);
+    if (passwordError) return res.status(400).json({ success: false, message: passwordError });
+
+    const exists = await User.findOne({
+      $or: [{ email: normalizedEmail }, { employeeId: normalizedEmployeeId }],
+    });
+    if (exists) {
+      const field = exists.email === normalizedEmail ? 'Email' : 'Employee ID';
+      return res.status(409).json({ success: false, message: `${field} already registered.` });
+    }
+
+    const user = await User.create({
+      name: normalizedName,
+      fullName: normalizedName,
+      employeeId: normalizedEmployeeId,
+      email: normalizedEmail,
+      password,
+      department: normalizedDepartment,
+      position: normalizedPosition,
+      role: 'hr',
+      mustChangePassword: true,
+      passwordChangedAt: null,
+    });
+    const auditRecorded = await recordAuditEvent(req, {
+      action: 'USER_CREATED',
+      resourceType: 'user',
+      resourceId: user._id,
+      summary: `Registered HR account ${user.employeeId}.`,
+      details: { employeeId: user.employeeId, role: user.role },
+    });
+    return res.status(201).json({
+      success: true,
+      message: `HR account created for "${user.fullName}".`,
+      data: { user: safeUser(user) },
+      ...auditWarning(auditRecorded),
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyValue)[0];
+      return res.status(409).json({ success: false, message: `${field} already exists.` });
+    }
+    console.error('HR account registration failed:', error.name);
+    return res.status(500).json({ success: false, message: 'Unable to create the HR account right now.' });
   }
 };
 
@@ -159,10 +280,33 @@ const login = async (req, res) => {
         { employeeId: identifier.toUpperCase() },
       ],
     }).select('+password');
-    if (!user) return res.status(401).json({ success: false, message: 'Invalid credentials.' });
+    if (!user) {
+      await recordAuditEvent(req, {
+        action: 'LOGIN_FAILED',
+        resourceType: 'system',
+        summary: 'Failed sign-in attempt.',
+        details: { reason: 'invalid_credentials' },
+      });
+      return res.status(401).json({ success: false, message: 'Invalid credentials.' });
+    }
     const ok = await user.comparePassword(password);
-    if (!ok) return res.status(401).json({ success: false, message: 'Invalid credentials.' });
+    if (!ok) {
+      await recordAuditEvent(req, {
+        action: 'LOGIN_FAILED',
+        resourceType: 'system',
+        summary: 'Failed sign-in attempt.',
+        details: { reason: 'invalid_credentials' },
+      });
+      return res.status(401).json({ success: false, message: 'Invalid credentials.' });
+    }
     if (!user.isActive) {
+      await recordAuditEvent(req, {
+        action: 'LOGIN_FAILED',
+        resourceType: 'user',
+        resourceId: user._id,
+        summary: 'Sign-in blocked for an inactive account.',
+        details: { employeeId: user.employeeId, reason: 'inactive_account' },
+      });
       return res.status(403).json({ success: false, message: 'This account is inactive. Contact an administrator.' });
     }
 
@@ -229,17 +373,31 @@ const changePassword = async (req, res) => {
         authVersion: (user.authVersion || 0) + 1,
         passwordResetTokenHash: null,
         passwordResetExpiresAt: null,
+        passwordResetCodeHash: null,
+        passwordResetCodeExpiresAt: null,
+        passwordResetCodeAttempts: 0,
+        passwordResetCodeSentAt: null,
+        passwordResetGrantHash: null,
+        passwordResetGrantExpiresAt: null,
       } },
       { new: true, runValidators: true },
     );
     if (!updatedUser) {
       return res.status(409).json({ success: false, message: 'Password was changed by another request. Sign in and try again.' });
     }
+    const auditRecorded = await recordAuditEvent(req, {
+      action: 'PASSWORD_CHANGED',
+      resourceType: 'user',
+      resourceId: updatedUser._id,
+      summary: `Password changed for account ${updatedUser.employeeId}.`,
+      details: { employeeId: updatedUser.employeeId },
+    });
 
     return res.json({
       success: true,
       message: 'Password changed successfully.',
       data: { user: safeUser(updatedUser), token: signToken(updatedUser) },
+      ...auditWarning(auditRecorded),
     });
   } catch (error) {
     console.error('Change-password request failed:', error.message);
@@ -250,24 +408,36 @@ const changePassword = async (req, res) => {
 // POST /api/auth/forgot-password. The same response is used whether or not the
 // account exists to avoid disclosing registered email addresses.
 const forgotPassword = async (req, res) => {
-  const genericMessage = 'If an account exists, reset instructions may be sent to its registered email. This response does not confirm email delivery.';
+  const genericMessage = 'If an account exists for this email, a verification code may be sent. This response does not confirm email delivery.';
   if (!isPasswordResetEmailConfigured()) {
+    const missing = getSmtpConfigurationStatus().missingVariables;
     return res.status(503).json({
       success: false,
-      message: 'Password reset email is not configured. Contact your system administrator.',
+      message: `Password reset email is not configured. Missing backend setting(s): ${missing.join(', ')}.`,
     });
   }
   try {
+    await verifySmtpConnection();
+  } catch (error) {
+    const message = error.code === 'EAUTH'
+      ? 'The email service could not authenticate. For Gmail, set SMTP_PASS to a Google App Password.'
+      : ['ECONNECTION', 'ETIMEDOUT', 'ESOCKET'].includes(error.code)
+        ? 'The email service is temporarily unreachable. Check SMTP_HOST, SMTP_PORT, and SMTP_SECURE.'
+        : 'The email service is unavailable. Check the backend SMTP configuration.';
+    console.error('Password reset SMTP verification failed.', { code: error.code || 'UNKNOWN' });
+    return res.status(503).json({ success: false, message });
+  }
+  try {
     const email = String(req.body.email || '').trim().toLowerCase();
-    const user = await User.findOne({ email }).select('+passwordResetTokenHash +passwordResetExpiresAt');
-    if (user) {
+    const user = await User.findOne({ email, isActive: true }).select('+passwordResetCodeSentAt');
+    if (user && (!user.passwordResetCodeSentAt || Date.now() - user.passwordResetCodeSentAt.getTime() >= 60 * 1000)) {
       try {
-        await issuePasswordReset(user);
+        await issuePasswordResetCode(user);
       } catch (error) {
         console.error('Password reset email delivery failed.', { name: error.name, code: error.code });
       }
     }
-    return res.json({ success: true, message: genericMessage });
+    return res.json({ success: true, message: genericMessage, data: { nextStep: 'verify' } });
   } catch (error) {
     const databaseUnavailable = mongoose.connection.readyState !== 1
       || ['MongooseServerSelectionError', 'MongoNetworkError', 'MongoServerSelectionError'].includes(error.name);
@@ -279,11 +449,101 @@ const forgotPassword = async (req, res) => {
   }
 };
 
+const resendPasswordResetCode = async (req, res) => {
+  const genericMessage = 'If an account exists for this email, a verification code may be sent. This response does not confirm email delivery.';
+  if (!isPasswordResetEmailConfigured()) {
+    const missing = getSmtpConfigurationStatus().missingVariables;
+    return res.status(503).json({
+      success: false,
+      message: `Password reset email is not configured. Missing backend setting(s): ${missing.join(', ')}.`,
+    });
+  }
+  try {
+    await verifySmtpConnection();
+  } catch (error) {
+    const message = error.code === 'EAUTH'
+      ? 'The email service could not authenticate. For Gmail, set SMTP_PASS to a Google App Password.'
+      : ['ECONNECTION', 'ETIMEDOUT', 'ESOCKET'].includes(error.code)
+        ? 'The email service is temporarily unreachable. Check SMTP_HOST, SMTP_PORT, and SMTP_SECURE.'
+        : 'The email service is unavailable. Check the backend SMTP configuration.';
+    console.error('Password reset resend SMTP verification failed.', { code: error.code || 'UNKNOWN' });
+    return res.status(503).json({ success: false, message });
+  }
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const user = await User.findOne({ email, isActive: true }).select('+passwordResetCodeSentAt');
+    if (user && (!user.passwordResetCodeSentAt || Date.now() - user.passwordResetCodeSentAt.getTime() >= 60 * 1000)) {
+      try {
+        await issuePasswordResetCode(user);
+      } catch (error) {
+        console.error('Password reset code resend failed.', { name: error.name, code: error.code });
+      }
+    }
+    return res.json({ success: true, message: genericMessage, data: { nextStep: 'verify' } });
+  } catch (error) {
+    console.error('Password reset resend request failed:', error.name);
+    return res.status(503).json({ success: false, message: 'Unable to process the reset request right now.' });
+  }
+};
+
+const verifyPasswordResetCode = async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const code = String(req.body.code || '').trim();
+  if (!/^\d{6}$/.test(code)) {
+    return res.status(400).json({ success: false, message: 'Enter the six-digit verification code.' });
+  }
+  try {
+    const user = await User.findOne({ email, isActive: true }).select(
+      '+passwordResetCodeHash +passwordResetCodeExpiresAt +passwordResetCodeAttempts',
+    );
+    const now = new Date();
+    if (!user || !user.passwordResetCodeHash || !user.passwordResetCodeExpiresAt
+      || user.passwordResetCodeExpiresAt <= now || user.passwordResetCodeAttempts >= 5) {
+      return res.status(400).json({ success: false, message: 'The verification code is invalid or expired. Request a new code.' });
+    }
+
+    const expected = Buffer.from(hashResetCode(email, code), 'hex');
+    const actual = Buffer.from(user.passwordResetCodeHash, 'hex');
+    const valid = expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+    if (!valid) {
+      await User.updateOne({
+        _id: user._id,
+        passwordResetCodeHash: user.passwordResetCodeHash,
+        passwordResetCodeExpiresAt: { $gt: now },
+        passwordResetCodeAttempts: { $lt: 5 },
+      }, { $inc: { passwordResetCodeAttempts: 1 } });
+      return res.status(400).json({ success: false, message: 'The verification code is invalid or expired. Request a new code.' });
+    }
+
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const updated = await User.findOneAndUpdate({
+      _id: user._id,
+      passwordResetCodeHash: user.passwordResetCodeHash,
+      passwordResetCodeExpiresAt: { $gt: now },
+      passwordResetCodeAttempts: { $lt: 5 },
+    }, { $set: {
+      passwordResetCodeHash: null,
+      passwordResetCodeExpiresAt: null,
+      passwordResetCodeAttempts: 0,
+      passwordResetCodeSentAt: null,
+      passwordResetGrantHash: hashResetToken(resetToken),
+      passwordResetGrantExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    } }, { new: true });
+    if (!updated) return res.status(400).json({ success: false, message: 'The verification code is invalid or expired. Request a new code.' });
+    return res.json({ success: true, message: 'Code verified.', data: { resetToken } });
+  } catch (error) {
+    console.error('Password reset code verification failed:', error.name);
+    return res.status(500).json({ success: false, message: 'Unable to verify this code right now.' });
+  }
+};
+
 // POST /api/auth/reset-password
 const resetPassword = async (req, res) => {
   try {
-    const { token, newPassword, confirmPassword } = req.body;
-    if (typeof token !== 'string' || !/^[a-f0-9]{64}$/i.test(token)) {
+    const { token, resetToken, newPassword, confirmPassword } = req.body;
+    const isGrant = typeof resetToken === 'string' && /^[a-f0-9]{64}$/i.test(resetToken);
+    const activeToken = isGrant ? resetToken : token;
+    if (typeof activeToken !== 'string' || !/^[a-f0-9]{64}$/i.test(activeToken)) {
       return res.status(400).json({ success: false, message: 'Reset link is invalid or expired.' });
     }
     const passwordError = validatePassword(newPassword);
@@ -291,20 +551,21 @@ const resetPassword = async (req, res) => {
     if (newPassword !== confirmPassword) {
       return res.status(400).json({ success: false, message: 'New password and confirmation do not match.' });
     }
-    const user = await User.findOne({
-      passwordResetTokenHash: hashResetToken(token),
-      passwordResetExpiresAt: { $gt: new Date() },
-    }).select('+password +passwordResetTokenHash +passwordResetExpiresAt');
+    const resetQuery = isGrant
+      ? { passwordResetGrantHash: hashResetToken(activeToken), passwordResetGrantExpiresAt: { $gt: new Date() } }
+      : { passwordResetTokenHash: hashResetToken(activeToken), passwordResetExpiresAt: { $gt: new Date() } };
+    const user = await User.findOne(resetQuery).select(
+      '+password +passwordResetTokenHash +passwordResetExpiresAt +passwordResetGrantHash +passwordResetGrantExpiresAt',
+    );
     if (!user) return res.status(400).json({ success: false, message: 'Reset link is invalid or expired.' });
     if (await user.comparePassword(newPassword)) {
       return res.status(400).json({ success: false, message: 'New password must be different from the current password.' });
     }
 
-    const updatedUser = await User.findOneAndUpdate({
-      _id: user._id,
-      passwordResetTokenHash: hashResetToken(token),
-      passwordResetExpiresAt: { $gt: new Date() },
-    }, {
+    const atomicResetQuery = isGrant
+      ? { _id: user._id, passwordResetGrantHash: hashResetToken(activeToken), passwordResetGrantExpiresAt: { $gt: new Date() } }
+      : { _id: user._id, passwordResetTokenHash: hashResetToken(activeToken), passwordResetExpiresAt: { $gt: new Date() } };
+    const updatedUser = await User.findOneAndUpdate(atomicResetQuery, {
       $set: {
         password: await bcrypt.hash(newPassword, 12),
         passwordChangedAt: new Date(),
@@ -312,6 +573,12 @@ const resetPassword = async (req, res) => {
         authVersion: (user.authVersion || 0) + 1,
         passwordResetTokenHash: null,
         passwordResetExpiresAt: null,
+        passwordResetCodeHash: null,
+        passwordResetCodeExpiresAt: null,
+        passwordResetCodeAttempts: 0,
+        passwordResetCodeSentAt: null,
+        passwordResetGrantHash: null,
+        passwordResetGrantExpiresAt: null,
       },
     }, { new: true, runValidators: true });
     if (!updatedUser) {
@@ -337,15 +604,36 @@ const adminResetPassword = async (req, res) => {
       user.authVersion = (user.authVersion || 0) + 1;
       user.passwordResetTokenHash = null;
       user.passwordResetExpiresAt = null;
+      user.passwordResetCodeHash = null;
+      user.passwordResetCodeExpiresAt = null;
+      user.passwordResetCodeAttempts = 0;
+      user.passwordResetCodeSentAt = null;
+      user.passwordResetGrantHash = null;
+      user.passwordResetGrantExpiresAt = null;
       await user.save();
+      const auditRecorded = await recordAuditEvent(req, {
+        action: 'PASSWORD_RESET',
+        resourceType: 'user',
+        resourceId: user._id,
+        summary: `Administrator reset employee password for ${user.employeeId}.`,
+        details: { employeeId: user.employeeId, resetMode: 'temporary_password' },
+      });
       return res.json({
         success: true,
         message: 'Employee password reset. The employee must use the configured default password and change it before continuing.',
+        ...auditWarning(auditRecorded),
       });
     }
 
     await issuePasswordReset(user);
-    return res.json({ success: true, message: 'Password reset instructions sent to the account email address.' });
+    const auditRecorded = await recordAuditEvent(req, {
+      action: 'PASSWORD_RESET',
+      resourceType: 'user',
+      resourceId: user._id,
+      summary: `Administrator initiated password reset for ${user.employeeId}.`,
+      details: { employeeId: user.employeeId, resetMode: 'email' },
+    });
+    return res.json({ success: true, message: 'Password reset instructions sent to the account email address.', ...auditWarning(auditRecorded) });
   } catch (error) {
     if (/DEFAULT_EMPLOYEE_PASSWORD/.test(error.message)) {
       return res.status(503).json({ success: false, message: 'Employee password reset is not configured on the server.' });
@@ -355,77 +643,11 @@ const adminResetPassword = async (req, res) => {
   }
 };
 
-// POST /api/auth/signup  — public self-registration (role always 'employee')
-const signup = async (req, res) => {
-  try {
-    const {
-      fullName, employeeId, email, password, confirmPassword,
-      department, position, faceDescriptor,
-    } = req.body;
-
-    if (!fullName || !employeeId || !email || !password || !department || !position) {
-      return res.status(400).json({ success: false, message: 'All fields are required.' });
-    }
-    if (typeof position !== 'string' || position.trim().length < 2) {
-      return res.status(400).json({ success: false, message: 'Position title must be at least 2 characters long.' });
-    }
-    if (password !== confirmPassword) {
-      return res.status(400).json({ success: false, message: 'Passwords do not match.' });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters.' });
-    }
-    if (faceDescriptor !== undefined && (!Array.isArray(faceDescriptor) || faceDescriptor.length !== 128)) {
-      return res.status(400).json({ success: false, message: 'Face descriptor must be 128 numbers.' });
-    }
-
-    const exists = await User.findOne({
-      $or: [{ email: email.toLowerCase() }, { employeeId: employeeId.toUpperCase() }],
-    });
-    if (exists) {
-      const field = exists.email === email.toLowerCase() ? 'Email' : 'Employee ID';
-      return res.status(409).json({ success: false, message: `${field} already registered.` });
-    }
-
-    // ── Face duplicate check ──────────────────────────────
-    if (faceDescriptor && faceDescriptor.length === 128) {
-      const { duplicate, owner } = await checkFaceDuplicate(faceDescriptor);
-      if (duplicate) {
-        return res.status(409).json({
-          success: false,
-          message: `This face is already registered to "${owner.fullName}" (ID: ${owner.employeeId}). Each person can only register their own face.`,
-        });
-      }
-    }
-
-    const user = await User.create({
-      name:           fullName.trim(),
-      fullName:       fullName.trim(),
-      employeeId:     employeeId.toUpperCase().trim(),
-      email:          email.toLowerCase().trim(),
-      password,
-      department:     department.trim(),
-      position:       position.trim(),
-      role:           'employee',          // public signup always employee
-      faceDescriptor: faceDescriptor || [],
-    });
-    await syncEmployeeForUser(user);
-    invalidateFaceCandidates();
-
-    return res.status(201).json({
-      success: true,
-      message: `Account created for "${user.fullName}". You can now sign in.`,
-      data: { user: safeUser(user), token: signToken(user._id, user.role) },
-    });
-  } catch (err) {
-    if (err.code === 11000) {
-      const field = Object.keys(err.keyValue)[0];
-      return res.status(409).json({ success: false, message: `${field} already exists.` });
-    }
-    console.error('Signup error:', err);
-    return res.status(500).json({ success: false, message: 'Server error during signup.' });
-  }
-};
+// POST /api/auth/signup — the legacy public registration route is intentionally disabled.
+const signup = async (_req, res) => res.status(403).json({
+  success: false,
+  message: 'Registration is restricted. Please contact your administrator.',
+});
 
 // POST /api/auth/setup-admin  — first-time admin creation (blocked if any admin exists)
 const setupAdmin = async (req, res) => {
@@ -462,11 +684,19 @@ const setupAdmin = async (req, res) => {
       position:   'System Administrator',
       role:       'admin',
     });
+    const auditRecorded = await recordAuditEvent(req, {
+      action: 'ADMIN_SETUP_COMPLETED',
+      resourceType: 'user',
+      resourceId: user._id,
+      summary: `Initial administrator account ${user.employeeId} was created.`,
+      details: { employeeId: user.employeeId, role: user.role },
+    });
 
     return res.status(201).json({
       success: true,
       message: `Admin account created for "${user.fullName}". You can now sign in.`,
       data: { user: safeUser(user) },
+      ...auditWarning(auditRecorded),
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -479,6 +709,7 @@ const setupAdmin = async (req, res) => {
 };
 
 module.exports = {
-  register, login, getMe, logout, signup, setupAdmin,
-  changePassword, forgotPassword, resetPassword, adminResetPassword,
+  register, registerHr, login, getMe, logout, signup, setupAdmin,
+  changePassword, forgotPassword, resendPasswordResetCode, verifyPasswordResetCode,
+  resetPassword, adminResetPassword,
 };

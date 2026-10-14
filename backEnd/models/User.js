@@ -32,6 +32,12 @@ const userSchema = new mongoose.Schema({
   authVersion: { type: Number, default: 0, min: 0 },
   passwordResetTokenHash: { type: String, default: null, select: false },
   passwordResetExpiresAt: { type: Date, default: null, select: false },
+  passwordResetCodeHash: { type: String, default: null, select: false },
+  passwordResetCodeExpiresAt: { type: Date, default: null, select: false },
+  passwordResetCodeAttempts: { type: Number, default: 0, min: 0, select: false },
+  passwordResetCodeSentAt: { type: Date, default: null, select: false },
+  passwordResetGrantHash: { type: String, default: null, select: false },
+  passwordResetGrantExpiresAt: { type: Date, default: null, select: false },
   faceDescriptor: {
     type: [Number], default: [],
     validate: {

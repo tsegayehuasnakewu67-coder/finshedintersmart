@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { Building2, ShieldCheck, Eye, EyeOff, Loader2 } from 'lucide-react';
+import PageBackButton from '../components/PageBackButton';
 
 const INIT = { fullName: '', email: '', password: '', confirmPassword: '' };
 
@@ -51,21 +52,22 @@ export default function AdminSetup() {
   };
 
   return (
-    <div className="legacy-page min-h-screen bg-[#020917] flex items-center justify-center p-4">
+    <div className="legacy-page min-h-screen bg-white flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
+        <PageBackButton fallback="/" />
 
         {/* Brand */}
         <div style={{ display:'flex', flexDirection:'column', alignItems:'center', marginBottom:'32px' }}>
-          <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-900/50"
+          <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-900/20"
             style={{ marginBottom:'16px' }}>
             <Building2 size={22} className="text-white" />
           </div>
-          <h1 className="text-2xl font-extrabold text-slate-100 tracking-tight">Smart Attendance System</h1>
+          <h1 className="text-2xl font-extrabold text-slate-800 tracking-tight">Smart Attendance System</h1>
           <p className="text-sm text-slate-500" style={{ marginTop:'4px' }}>First-Time Setup</p>
         </div>
 
         {/* Card */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl"
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-2xl"
           style={{ padding:'28px 24px 32px' }}>
 
           {/* Header */}

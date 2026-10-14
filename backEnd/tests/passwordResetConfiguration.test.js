@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const { forgotPassword, resetPassword } = require('../controllers/authController');
-const { isPasswordResetEmailConfigured } = require('../services/emailService');
+const { isPasswordResetEmailConfigured, getSmtpConfigurationStatus } = require('../services/emailService');
 
 const responseMock = () => ({
   statusCode: 200,
@@ -15,7 +15,9 @@ const responseMock = () => ({
 test('forgot-password reports unavailable when SMTP is not configured without looking up email', async () => {
   const originalFindOne = User.findOne;
   const previous = Object.fromEntries(
-    ['MAIL_HOST', 'MAIL_USER', 'MAIL_PASSWORD', 'MAIL_FROM'].map((key) => [key, process.env[key]]),
+    ['SMTP_HOST', 'SMTP_PORT', 'SMTP_SECURE', 'SMTP_USER', 'SMTP_PASS', 'EMAIL_FROM',
+      'MAIL_HOST', 'MAIL_PORT', 'MAIL_SECURE', 'MAIL_USER', 'MAIL_PASSWORD', 'MAIL_FROM']
+      .map((key) => [key, process.env[key]]),
   );
   for (const key of Object.keys(previous)) delete process.env[key];
   User.findOne = async () => {
@@ -31,6 +33,28 @@ test('forgot-password reports unavailable when SMTP is not configured without lo
     assert.match(res.body.message, /email is not configured/i);
   } finally {
     User.findOne = originalFindOne;
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test('SMTP configuration reports missing Gmail App Password without exposing credentials', () => {
+  const keys = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_SECURE', 'SMTP_USER', 'SMTP_PASS', 'EMAIL_FROM'];
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  process.env.SMTP_HOST = 'smtp.gmail.com';
+  process.env.SMTP_PORT = '587';
+  process.env.SMTP_SECURE = 'false';
+  process.env.SMTP_USER = 'sender@example.test';
+  process.env.SMTP_PASS = '';
+  process.env.EMAIL_FROM = 'sender@example.test';
+  try {
+    const status = getSmtpConfigurationStatus();
+    assert.equal(status.configured, false);
+    assert.deepEqual(status.missingVariables, ['SMTP_PASS']);
+    assert.equal(JSON.stringify(status).includes('sender@example.test'), false);
+  } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
