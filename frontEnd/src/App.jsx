@@ -1,5 +1,8 @@
+import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
+import { shiftService } from './services/shiftService';
+import { setAttendanceTimePreferences } from './utils/ethiopianDateTime';
 
 import ProtectedRoute   from './components/ProtectedRoute';
 import Layout           from './components/Layout';
@@ -30,6 +33,13 @@ import ResetPassword   from './pages/ResetPassword';
 
 export default function App() {
   const { user, loading } = useAuth();
+
+  useEffect(() => {
+    shiftService.getSettings()
+      .then(setAttendanceTimePreferences)
+      .catch(() => {});
+  }, []);
+
   if (loading) return <Spinner fullScreen />;
 
   const home = user

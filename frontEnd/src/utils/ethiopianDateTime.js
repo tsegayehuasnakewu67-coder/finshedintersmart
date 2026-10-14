@@ -1,4 +1,11 @@
 export const ETHIOPIAN_TIME_ZONE = 'Africa/Addis_Ababa';
+let attendanceTimeZone = ETHIOPIAN_TIME_ZONE;
+let attendanceTimeFormat = '24-hour';
+
+export const setAttendanceTimePreferences = ({ timeZone, timeFormat } = {}) => {
+  if (timeZone) attendanceTimeZone = timeZone;
+  if (timeFormat === '12-hour' || timeFormat === '24-hour') attendanceTimeFormat = timeFormat;
+};
 
 const DATE_LOCALE = 'en-GB';
 
@@ -12,7 +19,7 @@ const asDate = value => {
 export const formatEthiopianDate = (value, options = {}) => {
   if (!value) return '—';
   return new Intl.DateTimeFormat(DATE_LOCALE, {
-    timeZone: ETHIOPIAN_TIME_ZONE,
+    timeZone: attendanceTimeZone,
     calendar: 'ethiopic',
     year: 'numeric',
     month: 'long',
@@ -24,11 +31,11 @@ export const formatEthiopianDate = (value, options = {}) => {
 export const formatEthiopianTime = (value, { seconds = false } = {}) => {
   if (!value) return '—';
   return new Intl.DateTimeFormat('en-GB', {
-    timeZone: ETHIOPIAN_TIME_ZONE,
+    timeZone: attendanceTimeZone,
     hour: '2-digit',
     minute: '2-digit',
     ...(seconds ? { second: '2-digit' } : {}),
-    hourCycle: 'h23',
+    hourCycle: attendanceTimeFormat === '12-hour' ? 'h12' : 'h23',
   }).format(asDate(value));
 };
 
@@ -39,7 +46,7 @@ export const formatEthiopianDateTime = value => {
 
 export const getAddisAbabaDateString = (date = new Date()) => {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: ETHIOPIAN_TIME_ZONE,
+    timeZone: attendanceTimeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',

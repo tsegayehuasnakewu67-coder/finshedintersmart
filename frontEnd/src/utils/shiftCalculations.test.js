@@ -21,6 +21,8 @@ const normalShift = {
   afterLunchStartMinute: 0,
   afterLunchEndHour: 17,
   afterLunchEndMinute: 0,
+  timeZone: 'Africa/Addis_Ababa',
+  timeFormat: '24-hour',
 };
 
 test('preview reports positive same-day and overnight durations and wraps the deadline', () => {
@@ -65,6 +67,30 @@ test('settings validation accepts configured windows and rejects invalid lunch o
     lunchStartHour: 11,
     lunchDuration: 120,
   }), '');
+});
+
+test('requested A-E schedules validate consistently in total minutes', () => {
+  const valid = {
+    ...normalShift,
+    endMinute: 30,
+    lunchEnabled: true,
+    lunchStartMinute: 30,
+    beforeLunchEndMinute: 30,
+    afterLunchStartMinute: 30,
+    afterLunchEndMinute: 30,
+  };
+  assert.equal(validateShiftForm(valid), '');
+  assert.equal(validateShiftForm({ ...valid, afterLunchEndMinute: 30 }), '');
+  assert.notEqual(validateShiftForm({
+    ...valid,
+    afterLunchStartHour: 17,
+    afterLunchStartMinute: 0,
+    afterLunchEndHour: 16,
+    afterLunchEndMinute: 30,
+  }), '');
+  assert.notEqual(validateShiftForm({ ...valid, afterLunchEndHour: 18, afterLunchEndMinute: 0 }), '');
+  assert.equal(validateShiftForm({ ...valid, endHour: 12 }), 'Afternoon window ends at 17:30, after the official shift end at 12:30.');
+  assert.notEqual(validateShiftForm({ ...valid, beforeLunchEndHour: 14, beforeLunchEndMinute: 0 }), '');
 });
 
 test('date display uses Ethiopian calendar while date keys remain Gregorian', () => {

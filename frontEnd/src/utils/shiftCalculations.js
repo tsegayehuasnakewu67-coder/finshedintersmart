@@ -28,6 +28,18 @@ export const getShiftPreview = (shift) => {
 };
 
 export const validateShiftForm = (shift) => {
+  if (typeof shift.timeZone !== 'string' || !shift.timeZone.trim()) {
+    return 'A valid IANA time zone is required.';
+  }
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: shift.timeZone.trim() });
+  } catch {
+    return 'A valid IANA time zone is required.';
+  }
+  if (!['24-hour', '12-hour'].includes(shift.timeFormat)) {
+    return 'Choose a valid time display format.';
+  }
+
   const fields = [
     ['startHour', 0, 23],
     ['startMinute', 0, 59],
@@ -48,51 +60,49 @@ export const validateShiftForm = (shift) => {
   ];
 
   for (const [field, min, max] of fields) {
-    if (!Number.isInteger(Number(shift[field])) || Number(shift[field]) < min || Number(shift[field]) > max) {
+    if (
+      shift[field] === ''
+      || shift[field] === null
+      || shift[field] === undefined
+      || !Number.isInteger(Number(shift[field]))
+      || Number(shift[field]) < min
+      || Number(shift[field]) > max
+    ) {
       return `${field} must be an integer between ${min} and ${max}.`;
     }
   }
 
   const start = toMinutes(shift.startHour, shift.startMinute);
-  const duration = getShiftDurationMinutes(
-    shift.startHour,
-    shift.startMinute,
-    shift.endHour,
-    shift.endMinute,
-  );
-  if (duration <= 0 || duration >= MINUTES_PER_DAY) {
-    return 'Shift start and end times must define a duration between 1 minute and 24 hours.';
+  const end = toMinutes(shift.endHour, shift.endMinute);
+  if (start >= end) {
+    return 'Official shift start must be earlier than the shift end.';
   }
 
-  const offset = (hour, minute) => {
-    const clockMinutes = toMinutes(hour, minute);
-    const difference = clockMinutes - start;
-    return difference < 0 && shift.endHour * 60 + shift.endMinute < start
-      ? difference + MINUTES_PER_DAY
-      : difference;
-  };
-  const beforeStartDifference = toMinutes(shift.beforeLunchStartHour, shift.beforeLunchStartMinute) - start;
-  const beforeStartOffset = shift.endHour * 60 + shift.endMinute < start && beforeStartDifference < -MINUTES_PER_DAY / 2
-    ? beforeStartDifference + MINUTES_PER_DAY
-    : beforeStartDifference;
-  const beforeEnd = offset(shift.beforeLunchEndHour, shift.beforeLunchEndMinute);
-  const afterStart = offset(shift.afterLunchStartHour, shift.afterLunchStartMinute);
-  const afterEnd = offset(shift.afterLunchEndHour, shift.afterLunchEndMinute);
+  const beforeStart = toMinutes(shift.beforeLunchStartHour, shift.beforeLunchStartMinute);
+  const beforeEnd = toMinutes(shift.beforeLunchEndHour, shift.beforeLunchEndMinute);
+  const afterStart = toMinutes(shift.afterLunchStartHour, shift.afterLunchStartMinute);
+  const afterEnd = toMinutes(shift.afterLunchEndHour, shift.afterLunchEndMinute);
 
-  if (beforeEnd <= beforeStartOffset || beforeEnd > duration) {
-    return 'The before-lunch window must be ordered and its end must fall within the shift.';
+  if (beforeStart < start || beforeStart >= beforeEnd || beforeEnd > end) {
+    return 'The before-lunch window must be ordered and fall within the official shift.';
   }
-  if (afterEnd <= afterStart || afterEnd > duration) {
+  if (afterStart < start || afterStart >= afterEnd) {
     return 'The after-lunch window must be ordered and end within the shift.';
   }
-  if (shift.lunchEnabled) {
-    const lunchStart = offset(shift.lunchStartHour, shift.lunchStartMinute);
-    const lunchEnd = lunchStart + Number(shift.lunchDuration);
-    if (lunchStart < 0 || lunchStart < beforeEnd || lunchEnd > afterStart || lunchEnd > duration) {
-      return 'Lunch must start after the before-lunch window and finish before the after-lunch window and shift end.';
-    }
-  } else if (beforeEnd > afterStart) {
+  if (afterEnd > end) {
+    const formatTime = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+    return `Afternoon window ends at ${formatTime(afterEnd)}, after the official shift end at ${formatTime(end)}.`;
+  }
+  if (beforeEnd > afterStart) {
     return 'The before-lunch window must end before the after-lunch window starts.';
+  }
+
+  if (shift.lunchEnabled) {
+    const lunchStart = toMinutes(shift.lunchStartHour, shift.lunchStartMinute);
+    const lunchEnd = lunchStart + Number(shift.lunchDuration);
+    if (lunchStart < beforeEnd || lunchEnd > afterStart || lunchStart < start || lunchEnd > end) {
+      return 'Lunch must fit between the attendance windows and within the official shift.';
+    }
   }
 
   return '';

@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { shiftService } from '../../services/shiftService';
-import { getShiftPreview, validateShiftForm } from '../../utils/shiftCalculations';
+import { getShiftPreview, toMinutes, validateShiftForm } from '../../utils/shiftCalculations';
+import { setAttendanceTimePreferences } from '../../utils/ethiopianDateTime';
 import { Clock, Save, Info, CheckCircle2, Loader2, AlertTriangle, UtensilsCrossed, Bell } from 'lucide-react';
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -13,14 +14,16 @@ const addMins = (h, m, mins) => {
 const INIT = {
   startHour: 8,  startMinute: 30,
   gracePeriod: 5,
-  endHour: 17,   endMinute: 0,
-  lunchEnabled: false,
-  lunchStartHour: 12, lunchStartMinute: 0,
+  endHour: 17,   endMinute: 30,
+  lunchEnabled: true,
+  lunchStartHour: 12, lunchStartMinute: 30,
   lunchDuration: 60,
   beforeLunchStartHour: 8, beforeLunchStartMinute: 30,
-  beforeLunchEndHour: 12, beforeLunchEndMinute: 0,
-  afterLunchStartHour: 13, afterLunchStartMinute: 0,
-  afterLunchEndHour: 17, afterLunchEndMinute: 0,
+  beforeLunchEndHour: 12, beforeLunchEndMinute: 30,
+  afterLunchStartHour: 13, afterLunchStartMinute: 30,
+  afterLunchEndHour: 17, afterLunchEndMinute: 30,
+  timeZone: 'Africa/Addis_Ababa',
+  timeFormat: '24-hour',
   notifyCheckIn: true,
   notifyCheckOut: true,
 };
@@ -30,19 +33,21 @@ const fromSettings = (d) => ({
   startMinute: d.startMinute ?? 30,
   gracePeriod: d.gracePeriod ?? 5,
   endHour: d.endHour ?? 17,
-  endMinute: d.endMinute ?? 0,
-  lunchEnabled: d.lunchEnabled ?? false,
+  endMinute: d.endMinute ?? 30,
+  lunchEnabled: d.lunchEnabled ?? true,
   lunchStartHour: d.lunchStartHour ?? 12,
-  lunchStartMinute: d.lunchStartMinute ?? 0,
+  lunchStartMinute: d.lunchStartMinute ?? 30,
   lunchDuration: d.lunchDuration ?? 60,
   beforeLunchStartHour: d.beforeLunchStartHour ?? 8,
   beforeLunchStartMinute: d.beforeLunchStartMinute ?? 30,
   beforeLunchEndHour: d.beforeLunchEndHour ?? 12,
-  beforeLunchEndMinute: d.beforeLunchEndMinute ?? 0,
+  beforeLunchEndMinute: d.beforeLunchEndMinute ?? 30,
   afterLunchStartHour: d.afterLunchStartHour ?? 13,
-  afterLunchStartMinute: d.afterLunchStartMinute ?? 0,
+  afterLunchStartMinute: d.afterLunchStartMinute ?? 30,
   afterLunchEndHour: d.afterLunchEndHour ?? 17,
-  afterLunchEndMinute: d.afterLunchEndMinute ?? 0,
+  afterLunchEndMinute: d.afterLunchEndMinute ?? 30,
+  timeZone: d.timeZone ?? 'Africa/Addis_Ababa',
+  timeFormat: d.timeFormat ?? '24-hour',
   notifyCheckIn: d.notifyCheckIn ?? true,
   notifyCheckOut: d.notifyCheckOut ?? true,
 });
@@ -54,6 +59,7 @@ export default function ShiftSettings() {
   const [saving,  setSaving]  = useState(false);
   const [error,   setError]   = useState('');
   const [success, setSuccess] = useState('');
+  const saveInFlight = useRef(false);
 
   useEffect(() => {
     shiftService.getSettings()
@@ -61,13 +67,14 @@ export default function ShiftSettings() {
         const loaded = fromSettings(d || INIT);
         setForm(loaded);
         setSavedForm(loaded);
+        setAttendanceTimePreferences(loaded);
       })
       .catch(e => setError(e.response?.data?.message || e.message))
       .finally(() => setLoading(false));
   }, []);
 
   const set = (field, val) => {
-    const numericValue = Number(val);
+    const numericValue = field === 'timeZone' || field === 'timeFormat' || val === '' ? val : Number(val);
     setForm(previous => {
       const next = { ...previous, [field]: numericValue };
       if (
@@ -88,28 +95,33 @@ export default function ShiftSettings() {
       }
       return next;
     });
+    setError('');
     setSuccess('');
   };
-  const toggle = ()           => { setForm(p => ({ ...p, lunchEnabled: !p.lunchEnabled })); setSuccess(''); };
+  const toggle = ()           => { setForm(p => ({ ...p, lunchEnabled: !p.lunchEnabled })); setError(''); setSuccess(''); };
 
   const handleSave = async e => {
     e.preventDefault();
+    if (saveInFlight.current) return;
     setError(''); setSuccess('');
     const validationError = validateShiftForm(form);
     if (validationError) {
       setError(validationError);
       return;
     }
+    saveInFlight.current = true;
     setSaving(true);
     try {
       const response = await shiftService.updateSettings(form);
       const saved = fromSettings(response.data);
       setForm(saved);
       setSavedForm(saved);
+      setAttendanceTimePreferences(saved);
       setSuccess('Shift settings saved successfully.');
     } catch (err) {
       setError(err.response?.data?.message || err.message);
     } finally {
+      saveInFlight.current = false;
       setSaving(false);
     }
   };
@@ -147,10 +159,23 @@ export default function ShiftSettings() {
       <div style={{ ...card, gap:8 }} aria-label="Regional date and time settings">
         <h2 style={{ fontSize:14, fontWeight:700, color:'#e2e7f0', margin:0 }}>Regional Date &amp; Time</h2>
         <p style={{ ...hint, color:'#94a0b8' }}>
-          Ethiopian calendar · Addis Ababa time (Africa/Addis_Ababa, UTC+03:00) · 24-hour clock.
+          Ethiopian calendar · {form.timeZone} · {form.timeFormat === '24-hour' ? '24-hour' : '12-hour'} clock.
           Attendance decisions and timestamps use this time zone. Dates are displayed in the Ethiopian calendar;
           stored dates and date-filter inputs remain Gregorian.
         </p>
+        <div style={row}>
+          <label style={{ display:'flex', flexDirection:'column', gap:6, flex:1, minWidth:200 }}>
+            <span style={fieldLabel}>IANA time zone</span>
+            <input value={form.timeZone} onChange={event => set('timeZone', event.target.value)} style={input} autoComplete="off" />
+          </label>
+          <label style={{ display:'flex', flexDirection:'column', gap:6, flex:1, minWidth:200 }}>
+            <span style={fieldLabel}>Clock format</span>
+            <select value={form.timeFormat} onChange={event => set('timeFormat', event.target.value)} style={input}>
+              <option value="24-hour">24-hour</option>
+              <option value="12-hour">12-hour</option>
+            </select>
+          </label>
+        </div>
       </div>
 
       <form onSubmit={handleSave}>
@@ -284,6 +309,18 @@ export default function ShiftSettings() {
 
           {error   && <Alert type="error"   text={error} />}
           {validationError && !error && <Alert type="error" text={validationError} />}
+          {toMinutes(form.afterLunchEndHour, form.afterLunchEndMinute) > toMinutes(form.endHour, form.endMinute) && (
+            <button
+              type="button"
+              onClick={() => {
+                set('endHour', form.afterLunchEndHour);
+                set('endMinute', form.afterLunchEndMinute);
+              }}
+              style={{ alignSelf:'flex-start', padding:'8px 12px', borderRadius:8, border:'1px solid #93c5fd', background:'#eff6ff', color:'#1d4ed8', fontWeight:600, cursor:'pointer' }}
+            >
+              Set official end to {fmt24(form.afterLunchEndHour, form.afterLunchEndMinute)}
+            </button>
+          )}
           {success && <Alert type="success" text={success} />}
 
           <button
@@ -436,3 +473,5 @@ function Alert({ type, text }) {
 const card = { background:'#0f182a', border:'1px solid #1e283b', borderRadius:16, padding:'24px', display:'flex', flexDirection:'column', gap:20 };
 const hint = { fontSize:12, color:'#64748b', margin:0, lineHeight:1.5 };
 const row  = { display:'flex', gap:24, flexWrap:'wrap' };
+const fieldLabel = { fontSize:11, fontWeight:600, color:'#64748b', textTransform:'uppercase' };
+const input = { width:'100%', minHeight:40, padding:'9px 12px', borderRadius:8, background:'#0f182a', border:'1px solid #333e55', color:'#f1f4f9', fontSize:14, boxSizing:'border-box' };
